@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"math"
 
+	"github.com/lib/pq"
+
 	"archaeology-pollution-system/database"
 	"archaeology-pollution-system/models"
 )
@@ -488,4 +490,434 @@ func SaveRemediationAssessment(ctx context.Context, a *models.RemediationAssessm
 	`, a.SiteID, metalsJSON, concsJSON, a.PollutionIndex,
 		a.EcoRiskIndex, a.MobilityLevel, techJSON, a.AssessmentDate).Scan(&id)
 	return id, err
+}
+
+func GetSlagComposition(ctx context.Context, siteID int, year int) (*models.SlagComposition, error) {
+	query := `
+		SELECT id, site_id, measurement_year, sample_depth,
+			sio2, al2o3, cao, feo, fe2o3, mgo, mno, p2o5, so3, k2o, na2o, tio2,
+			fayalite, wollastonite, anorthite, diopside, magnetite, hematite, wuestite,
+			glass_phase, other_minerals,
+			pb_leaching, cd_leaching, as_leaching, hg_leaching, cr_leaching, ni_leaching,
+			density, specific_surface, loss_on_ignition, remark, created_at
+		FROM slag_compositions
+		WHERE site_id = $1
+		ORDER BY measurement_year DESC
+		LIMIT 1
+	`
+	var s models.SlagComposition
+	var sampleDepth, remark sql.NullString
+	err := database.Pool.QueryRow(ctx, query, siteID).Scan(
+		&s.ID, &s.SiteID, &s.MeasurementYear, &sampleDepth,
+		&s.SiO2, &s.Al2O3, &s.CaO, &s.FeO, &s.Fe2O3, &s.MgO, &s.MnO, &s.P2O5, &s.SO3, &s.K2O, &s.Na2O, &s.TiO2,
+		&s.Fayalite, &s.Wollastonite, &s.Anorthite, &s.Diopside, &s.Magnetite, &s.Hematite, &s.Wuestite,
+		&s.GlassPhase, &s.OtherMinerals,
+		&s.PbLeaching, &s.CdLeaching, &s.AsLeaching, &s.HgLeaching, &s.CrLeaching, &s.NiLeaching,
+		&s.Density, &s.SpecificSurface, &s.LossOnIgnition, &remark, &s.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.SampleDepth = sampleDepth.String
+	s.Remark = remark.String
+	return &s, nil
+}
+
+func GetSlagCompositionsBySite(ctx context.Context, siteID int, limit int) ([]models.SlagComposition, error) {
+	query := `
+		SELECT id, site_id, measurement_year, sample_depth,
+			sio2, al2o3, cao, feo, fe2o3, mgo, mno, p2o5, so3, k2o, na2o, tio2,
+			fayalite, wollastonite, anorthite, diopside, magnetite, hematite, wuestite,
+			glass_phase, other_minerals,
+			pb_leaching, cd_leaching, as_leaching, hg_leaching, cr_leaching, ni_leaching,
+			density, specific_surface, loss_on_ignition, remark, created_at
+		FROM slag_compositions
+		WHERE site_id = $1
+		ORDER BY measurement_year DESC
+		LIMIT $2
+	`
+	rows, err := database.Pool.Query(ctx, query, siteID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var slags []models.SlagComposition
+	for rows.Next() {
+		var s models.SlagComposition
+		var sampleDepth, remark sql.NullString
+		err := rows.Scan(
+			&s.ID, &s.SiteID, &s.MeasurementYear, &sampleDepth,
+			&s.SiO2, &s.Al2O3, &s.CaO, &s.FeO, &s.Fe2O3, &s.MgO, &s.MnO, &s.P2O5, &s.SO3, &s.K2O, &s.Na2O, &s.TiO2,
+			&s.Fayalite, &s.Wollastonite, &s.Anorthite, &s.Diopside, &s.Magnetite, &s.Hematite, &s.Wuestite,
+			&s.GlassPhase, &s.OtherMinerals,
+			&s.PbLeaching, &s.CdLeaching, &s.AsLeaching, &s.HgLeaching, &s.CrLeaching, &s.NiLeaching,
+			&s.Density, &s.SpecificSurface, &s.LossOnIgnition, &remark, &s.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		s.SampleDepth = sampleDepth.String
+		s.Remark = remark.String
+		slags = append(slags, s)
+	}
+	return slags, nil
+}
+
+func GetFarmlandSoilsBySite(ctx context.Context, siteID int, limit int) ([]models.FarmlandSoil, error) {
+	query := `
+		SELECT id, site_id, measurement_year, distance_from_site, direction, land_use_type,
+			pb, zn, cu, as_, hg, cd, cr, ni,
+			ph, organic_matter, cec, soil_type, main_crops, created_at
+		FROM farmland_soils
+		WHERE site_id = $1
+		ORDER BY measurement_year DESC, distance_from_site ASC
+		LIMIT $2
+	`
+	rows, err := database.Pool.Query(ctx, query, siteID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var soils []models.FarmlandSoil
+	for rows.Next() {
+		var f models.FarmlandSoil
+		var direction, landUseType, soilType sql.NullString
+		var ph, organicMatter, cec sql.NullFloat64
+		var mainCrops pq.StringArray
+		err := rows.Scan(
+			&f.ID, &f.SiteID, &f.MeasurementYear, &f.DistanceFromSite, &direction, &landUseType,
+			&f.Pb, &f.Zn, &f.Cu, &f.As, &f.Hg, &f.Cd, &f.Cr, &f.Ni,
+			&ph, &organicMatter, &cec, &soilType, &mainCrops, &f.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		f.Direction = direction.String
+		f.LandUseType = landUseType.String
+		f.SoilType = soilType.String
+		if ph.Valid {
+			v := ph.Float64
+			f.PH = &v
+		}
+		if organicMatter.Valid {
+			v := organicMatter.Float64
+			f.OrganicMatter = &v
+		}
+		if cec.Valid {
+			v := cec.Float64
+			f.CEC = &v
+		}
+		f.MainCrops = []string(mainCrops)
+		soils = append(soils, f)
+	}
+	return soils, nil
+}
+
+func GetSmeltingInversion(ctx context.Context, siteID int, year int) (*models.SmeltingProcessInversion, error) {
+	query := `
+		SELECT id, site_id, measurement_year,
+			estimated_temperature, temperature_confidence,
+			reducing_agent, reducing_agent_confidence,
+			bpnn_posterior, bayes_posterior,
+			process_type_detailed, process_era_estimate,
+			input_features, bpnn_mse, bayes_kld,
+			quality_level, remark, created_at
+		FROM smelting_process_inversions
+		WHERE site_id = $1 AND measurement_year = $2
+	`
+	var inv models.SmeltingProcessInversion
+	var reducingAgent, processTypeDetailed, processEraEstimate, qualityLevel, remark sql.NullString
+	var bpnnPosteriorJSON, bayesPosteriorJSON, inputFeaturesJSON []byte
+	err := database.Pool.QueryRow(ctx, query, siteID, year).Scan(
+		&inv.ID, &inv.SiteID, &inv.MeasurementYear,
+		&inv.EstimatedTemperature, &inv.TemperatureConfidence,
+		&reducingAgent, &inv.ReducingAgentConfidence,
+		&bpnnPosteriorJSON, &bayesPosteriorJSON,
+		&processTypeDetailed, &processEraEstimate,
+		&inputFeaturesJSON, &inv.BPNNMSE, &inv.BayesKLD,
+		&qualityLevel, &remark, &inv.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	inv.ReducingAgent = reducingAgent.String
+	inv.ProcessTypeDetailed = processTypeDetailed.String
+	inv.ProcessEraEstimate = processEraEstimate.String
+	inv.QualityLevel = qualityLevel.String
+	inv.Remark = remark.String
+	if len(bpnnPosteriorJSON) > 0 {
+		json.Unmarshal(bpnnPosteriorJSON, &inv.BPNNPosterior)
+	}
+	if len(bayesPosteriorJSON) > 0 {
+		json.Unmarshal(bayesPosteriorJSON, &inv.BayesPosterior)
+	}
+	if len(inputFeaturesJSON) > 0 {
+		json.Unmarshal(inputFeaturesJSON, &inv.InputFeatures)
+	}
+	return &inv, nil
+}
+
+func SaveSmeltingInversion(ctx context.Context, inv *models.SmeltingProcessInversion) (int, error) {
+	bpnnPosteriorJSON, _ := json.Marshal(inv.BPNNPosterior)
+	bayesPosteriorJSON, _ := json.Marshal(inv.BayesPosterior)
+	inputFeaturesJSON, _ := json.Marshal(inv.InputFeatures)
+
+	query := `
+		INSERT INTO smelting_process_inversions
+		(site_id, measurement_year,
+		 estimated_temperature, temperature_confidence,
+		 reducing_agent, reducing_agent_confidence,
+		 bpnn_posterior, bayes_posterior,
+		 process_type_detailed, process_era_estimate,
+		 input_features, bpnn_mse, bayes_kld,
+		 quality_level, remark)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		ON CONFLICT (site_id, measurement_year) DO UPDATE SET
+			estimated_temperature = EXCLUDED.estimated_temperature,
+			temperature_confidence = EXCLUDED.temperature_confidence,
+			reducing_agent = EXCLUDED.reducing_agent,
+			reducing_agent_confidence = EXCLUDED.reducing_agent_confidence,
+			bpnn_posterior = EXCLUDED.bpnn_posterior,
+			bayes_posterior = EXCLUDED.bayes_posterior,
+			process_type_detailed = EXCLUDED.process_type_detailed,
+			process_era_estimate = EXCLUDED.process_era_estimate,
+			input_features = EXCLUDED.input_features,
+			bpnn_mse = EXCLUDED.bpnn_mse,
+			bayes_kld = EXCLUDED.bayes_kld,
+			quality_level = EXCLUDED.quality_level,
+			remark = EXCLUDED.remark,
+			created_at = CURRENT_TIMESTAMP
+		RETURNING id
+	`
+	var id int
+	err := database.Pool.QueryRow(ctx, query,
+		inv.SiteID, inv.MeasurementYear,
+		inv.EstimatedTemperature, inv.TemperatureConfidence,
+		inv.ReducingAgent, inv.ReducingAgentConfidence,
+		bpnnPosteriorJSON, bayesPosteriorJSON,
+		inv.ProcessTypeDetailed, inv.ProcessEraEstimate,
+		inputFeaturesJSON, inv.BPNNMSE, inv.BayesKLD,
+		inv.QualityLevel, inv.Remark,
+	).Scan(&id)
+	return id, err
+}
+
+func GetResourceAssessment(ctx context.Context, siteID int, year int) (*models.ResourceUtilizationAssessment, error) {
+	query := `
+		SELECT id, site_id, measurement_year,
+			cement_blended_feasibility, cement_blended_score, cement_blended_grade, cement_details,
+			road_base_feasibility, road_base_score, road_base_grade, road_details,
+			other_uses,
+			leaching_risk_level, leaching_risk_details,
+			recommended_use, utilization_plan, created_at
+		FROM resource_utilization_assessments
+		WHERE site_id = $1 AND measurement_year = $2
+	`
+	var a models.ResourceUtilizationAssessment
+	var cementFeasibility, cementGrade, roadFeasibility, roadGrade sql.NullString
+	var leachingRiskLevel, recommendedUse sql.NullString
+	var cementDetailsJSON, roadDetailsJSON, otherUsesJSON, leachingRiskDetailsJSON, utilizationPlanJSON []byte
+	err := database.Pool.QueryRow(ctx, query, siteID, year).Scan(
+		&a.ID, &a.SiteID, &a.MeasurementYear,
+		&cementFeasibility, &a.CementBlendedScore, &cementGrade, &cementDetailsJSON,
+		&roadFeasibility, &a.RoadBaseScore, &roadGrade, &roadDetailsJSON,
+		&otherUsesJSON,
+		&leachingRiskLevel, &leachingRiskDetailsJSON,
+		&recommendedUse, &utilizationPlanJSON, &a.CreatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	a.CementBlendedFeasibility = cementFeasibility.String
+	a.CementBlendedGrade = cementGrade.String
+	a.RoadBaseFeasibility = roadFeasibility.String
+	a.RoadBaseGrade = roadGrade.String
+	a.LeachingRiskLevel = leachingRiskLevel.String
+	a.RecommendedUse = recommendedUse.String
+	if len(cementDetailsJSON) > 0 {
+		json.Unmarshal(cementDetailsJSON, &a.CementDetails)
+	}
+	if len(roadDetailsJSON) > 0 {
+		json.Unmarshal(roadDetailsJSON, &a.RoadDetails)
+	}
+	if len(otherUsesJSON) > 0 {
+		json.Unmarshal(otherUsesJSON, &a.OtherUses)
+	}
+	if len(leachingRiskDetailsJSON) > 0 {
+		json.Unmarshal(leachingRiskDetailsJSON, &a.LeachingRiskDetails)
+	}
+	if len(utilizationPlanJSON) > 0 {
+		json.Unmarshal(utilizationPlanJSON, &a.UtilizationPlan)
+	}
+	return &a, nil
+}
+
+func SaveResourceAssessment(ctx context.Context, a *models.ResourceUtilizationAssessment) (int, error) {
+	cementDetailsJSON, _ := json.Marshal(a.CementDetails)
+	roadDetailsJSON, _ := json.Marshal(a.RoadDetails)
+	otherUsesJSON, _ := json.Marshal(a.OtherUses)
+	leachingRiskDetailsJSON, _ := json.Marshal(a.LeachingRiskDetails)
+	utilizationPlanJSON, _ := json.Marshal(a.UtilizationPlan)
+
+	query := `
+		INSERT INTO resource_utilization_assessments
+		(site_id, measurement_year,
+		 cement_blended_feasibility, cement_blended_score, cement_blended_grade, cement_details,
+		 road_base_feasibility, road_base_score, road_base_grade, road_details,
+		 other_uses,
+		 leaching_risk_level, leaching_risk_details,
+		 recommended_use, utilization_plan)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		ON CONFLICT (site_id, measurement_year) DO UPDATE SET
+			cement_blended_feasibility = EXCLUDED.cement_blended_feasibility,
+			cement_blended_score = EXCLUDED.cement_blended_score,
+			cement_blended_grade = EXCLUDED.cement_blended_grade,
+			cement_details = EXCLUDED.cement_details,
+			road_base_feasibility = EXCLUDED.road_base_feasibility,
+			road_base_score = EXCLUDED.road_base_score,
+			road_base_grade = EXCLUDED.road_base_grade,
+			road_details = EXCLUDED.road_details,
+			other_uses = EXCLUDED.other_uses,
+			leaching_risk_level = EXCLUDED.leaching_risk_level,
+			leaching_risk_details = EXCLUDED.leaching_risk_details,
+			recommended_use = EXCLUDED.recommended_use,
+			utilization_plan = EXCLUDED.utilization_plan,
+			created_at = CURRENT_TIMESTAMP
+		RETURNING id
+	`
+	var id int
+	err := database.Pool.QueryRow(ctx, query,
+		a.SiteID, a.MeasurementYear,
+		a.CementBlendedFeasibility, a.CementBlendedScore, a.CementBlendedGrade, cementDetailsJSON,
+		a.RoadBaseFeasibility, a.RoadBaseScore, a.RoadBaseGrade, roadDetailsJSON,
+		otherUsesJSON,
+		a.LeachingRiskLevel, leachingRiskDetailsJSON,
+		a.RecommendedUse, utilizationPlanJSON,
+	).Scan(&id)
+	return id, err
+}
+
+func GetAllTrendData(ctx context.Context) (map[int][]models.TrendData, error) {
+	query := `
+		SELECT site_id, measurement_year,
+			pb, zn, cu, as_val, hg, cd,
+			ph, organic_matter, cation_exchange_capacity
+		FROM xrf_measurements
+		ORDER BY site_id, measurement_year
+	`
+	rows, err := database.Pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[int][]models.TrendData)
+	for rows.Next() {
+		var t models.TrendData
+		var siteID int
+		var ph, organicMatter, cec sql.NullFloat64
+		err := rows.Scan(
+			&siteID, &t.Year,
+			&t.Pb, &t.Zn, &t.Cu, &t.As, &t.Hg, &t.Cd,
+			&ph, &organicMatter, &cec,
+		)
+		if err != nil {
+			return nil, err
+		}
+		t.PH = ph.Float64
+		t.OrganicMatter = organicMatter.Float64
+		t.CEC = cec.Float64
+		t.PollutionIndex = CalculatePollutionIndex(t.Pb, t.Zn, t.Cu, t.As, t.Hg, t.Cd)
+		result[siteID] = append(result[siteID], t)
+	}
+	return result, nil
+}
+
+func UpsertSlagComposition(ctx context.Context, s *models.SlagComposition) error {
+	query := `
+		INSERT INTO slag_compositions
+		(site_id, measurement_year, sample_depth,
+		 sio2, al2o3, cao, feo, fe2o3, mgo, mno, p2o5, so3, k2o, na2o, tio2,
+		 fayalite, wollastonite, anorthite, diopside, magnetite, hematite, wuestite,
+		 glass_phase, other_minerals,
+		 pb_leaching, cd_leaching, as_leaching, hg_leaching, cr_leaching, ni_leaching,
+		 density, specific_surface, loss_on_ignition, remark)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+		 $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30,
+		 $31, $32, $33, $34, $35)
+		ON CONFLICT (site_id, measurement_year, sample_depth) DO UPDATE SET
+			sio2 = EXCLUDED.sio2, al2o3 = EXCLUDED.al2o3, cao = EXCLUDED.cao,
+			feo = EXCLUDED.feo, fe2o3 = EXCLUDED.fe2o3, mgo = EXCLUDED.mgo,
+			mno = EXCLUDED.mno, p2o5 = EXCLUDED.p2o5, so3 = EXCLUDED.so3,
+			k2o = EXCLUDED.k2o, na2o = EXCLUDED.na2o, tio2 = EXCLUDED.tio2,
+			fayalite = EXCLUDED.fayalite, wollastonite = EXCLUDED.wollastonite,
+			anorthite = EXCLUDED.anorthite, diopside = EXCLUDED.diopside,
+			magnetite = EXCLUDED.magnetite, hematite = EXCLUDED.hematite,
+			wuestite = EXCLUDED.wuestite, glass_phase = EXCLUDED.glass_phase,
+			other_minerals = EXCLUDED.other_minerals,
+			pb_leaching = EXCLUDED.pb_leaching, cd_leaching = EXCLUDED.cd_leaching,
+			as_leaching = EXCLUDED.as_leaching, hg_leaching = EXCLUDED.hg_leaching,
+			cr_leaching = EXCLUDED.cr_leaching, ni_leaching = EXCLUDED.ni_leaching,
+			density = EXCLUDED.density, specific_surface = EXCLUDED.specific_surface,
+			loss_on_ignition = EXCLUDED.loss_on_ignition, remark = EXCLUDED.remark,
+			created_at = CURRENT_TIMESTAMP
+		RETURNING id, created_at
+	`
+	return database.Pool.QueryRow(ctx, query,
+		s.SiteID, s.MeasurementYear, s.SampleDepth,
+		s.SiO2, s.Al2O3, s.CaO, s.FeO, s.Fe2O3, s.MgO, s.MnO, s.P2O5, s.SO3, s.K2O, s.Na2O, s.TiO2,
+		s.Fayalite, s.Wollastonite, s.Anorthite, s.Diopside, s.Magnetite, s.Hematite, s.Wuestite,
+		s.GlassPhase, s.OtherMinerals,
+		s.PbLeaching, s.CdLeaching, s.AsLeaching, s.HgLeaching, s.CrLeaching, s.NiLeaching,
+		s.Density, s.SpecificSurface, s.LossOnIgnition, s.Remark,
+	).Scan(&s.ID, &s.CreatedAt)
+}
+
+func UpsertFarmlandSoil(ctx context.Context, f *models.FarmlandSoil) error {
+	var ph, organicMatter, cec sql.NullFloat64
+	if f.PH != nil {
+		ph = sql.NullFloat64{Float64: *f.PH, Valid: true}
+	}
+	if f.OrganicMatter != nil {
+		organicMatter = sql.NullFloat64{Float64: *f.OrganicMatter, Valid: true}
+	}
+	if f.CEC != nil {
+		cec = sql.NullFloat64{Float64: *f.CEC, Valid: true}
+	}
+	mainCrops := pq.StringArray(f.MainCrops)
+
+	query := `
+		INSERT INTO farmland_soils
+		(site_id, measurement_year, distance_from_site, direction, land_use_type,
+		 pb, zn, cu, as_, hg, cd, cr, ni,
+		 ph, organic_matter, cec, soil_type, main_crops)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+		 $14, $15, $16, $17, $18)
+		ON CONFLICT (site_id, measurement_year, distance_from_site, direction) DO UPDATE SET
+			land_use_type = EXCLUDED.land_use_type,
+			pb = EXCLUDED.pb, zn = EXCLUDED.zn, cu = EXCLUDED.cu,
+			as_ = EXCLUDED.as_, hg = EXCLUDED.hg, cd = EXCLUDED.cd,
+			cr = EXCLUDED.cr, ni = EXCLUDED.ni,
+			ph = EXCLUDED.ph, organic_matter = EXCLUDED.organic_matter,
+			cec = EXCLUDED.cec, soil_type = EXCLUDED.soil_type,
+			main_crops = EXCLUDED.main_crops,
+			created_at = CURRENT_TIMESTAMP
+		RETURNING id, created_at
+	`
+	return database.Pool.QueryRow(ctx, query,
+		f.SiteID, f.MeasurementYear, f.DistanceFromSite, f.Direction, f.LandUseType,
+		f.Pb, f.Zn, f.Cu, f.As, f.Hg, f.Cd, f.Cr, f.Ni,
+		ph, organicMatter, cec, f.SoilType, mainCrops,
+	).Scan(&f.ID, &f.CreatedAt)
 }

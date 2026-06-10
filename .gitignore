@@ -1,0 +1,56 @@
+# =========================================
+# Git 忽略文件
+# =========================================
+
+# Go 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+backend/server
+backend/archaeology-pollution-system
+simulator/simulator
+
+# Go 模块缓存
+vendor/
+go.sum.old
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 日志文件
+logs/
+*.log
+
+# Docker 数据卷（不要提交实际数据
+*.db
+*.sqlite
+
+# 环境变量（不要提交真实密码）
+.env
+!.env.example
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Node（如果有前端构建）
+node_modules/
+dist/
+build/
+
+# Prometheus 数据（如果本地运行）
+prometheus/data/

@@ -778,3 +778,360 @@ body {
 ::-webkit-scrollbar-thumb:hover {
     background: #484f58;
 }
+
+.slag-recycle-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.slag-section {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 14px;
+}
+
+.slag-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #e6edf3;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #21262d;
+}
+
+.slag-check-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.slag-check-table thead th {
+    text-align: left;
+    padding: 6px 8px;
+    color: #8b949e;
+    font-weight: 600;
+    border-bottom: 1px solid #21262d;
+    font-size: 11px;
+}
+
+.slag-check-table tbody td {
+    padding: 6px 8px;
+    color: #c9d1d9;
+    border-bottom: 1px solid #161b22;
+}
+
+.slag-check-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+/* ====== 新增功能样式 ====== */
+
+.site-name {
+    font-size: 18px;
+    font-weight: 700;
+    color: #e6edf3;
+    margin: 0 0 4px 0;
+}
+
+.site-meta {
+    font-size: 12px;
+    color: #8b949e;
+    margin-bottom: 6px;
+}
+
+.site-pi {
+    font-size: 13px;
+    color: #c9d1d9;
+}
+
+.pi-value {
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.pi-value.ok { color: #4caf50; }
+.pi-value.mild { color: #8bc34a; }
+.pi-value.warn { color: #ffc107; }
+.pi-value.danger { color: #ff9800; }
+.pi-value.critical { color: #f44336; }
+
+.pi-category {
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    margin-left: 6px;
+}
+
+.pi-category.ok { background: #1b4332; color: #4caf50; }
+.pi-category.mild { background: #33571a; color: #8bc34a; }
+.pi-category.warn { background: #5c4a00; color: #ffc107; }
+.pi-category.danger { background: #6b3000; color: #ff9800; }
+.pi-category.critical { background: #6e1515; color: #f44336; }
+
+/* Tab滚动（6个Tab需要） */
+.tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    border-bottom: 1px solid #21262d;
+    margin-bottom: 12px;
+}
+
+/* 冶炼工艺反演 */
+.inversion-card {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 12px;
+}
+
+.inversion-card h4 {
+    font-size: 13px;
+    color: #8b949e;
+    margin: 0 0 8px 0;
+}
+
+.temp-display {
+    font-size: 36px;
+    font-weight: 700;
+    text-align: center;
+    margin: 8px 0;
+}
+
+.temp-display.cool { color: #5dade2; }
+.temp-display.warm { color: #e67e22; }
+.temp-display.hot { color: #e74c3c; }
+
+.confidence-bar {
+    height: 8px;
+    background: #21262d;
+    border-radius: 4px;
+    overflow: hidden;
+    margin: 6px 0;
+}
+
+.confidence-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    background: linear-gradient(90deg, #4caf50, #8bc34a);
+    transition: width 0.5s;
+}
+
+.agent-prob-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+    font-size: 12px;
+    color: #c9d1d9;
+}
+
+.agent-prob-bar {
+    flex: 1;
+    height: 16px;
+    background: #21262d;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.agent-prob-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.5s;
+}
+
+.agent-prob-fill.charcoal { background: #8B4513; }
+.agent-prob-fill.coke { background: #555; }
+.agent-prob-fill.coal { background: #2a3a5e; }
+.agent-prob-fill.mixed { background: #6c757d; }
+
+.quality-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.quality-badge.high { background: #1b4332; color: #4caf50; }
+.quality-badge.medium { background: #5c4a00; color: #ffc107; }
+.quality-badge.low { background: #6e1515; color: #f44336; }
+
+.feature-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+}
+
+.feature-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid #161b22;
+    color: #c9d1d9;
+}
+
+.feature-table td:first-child { color: #8b949e; }
+
+/* 农田安全评估 */
+.farm-risk-card {
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 12px;
+}
+
+.farm-risk-card h4 {
+    font-size: 13px;
+    color: #8b949e;
+    margin: 0 0 8px 0;
+}
+
+.risk-level-tag {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.risk-level-tag.low { background: #1b4332; color: #4caf50; }
+.risk-level-tag.medium { background: #5c4a00; color: #ffc107; }
+.risk-level-tag.high { background: #6b3000; color: #ff9800; }
+.risk-level-tag.very-high { background: #6e1515; color: #f44336; }
+
+.crop-card {
+    background: #0d1117;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    padding: 10px;
+    margin: 8px 0;
+    font-size: 12px;
+}
+
+.crop-card-title {
+    font-weight: 600;
+    color: #e6edf3;
+    margin-bottom: 6px;
+}
+
+.crop-advice {
+    padding: 4px 0;
+    font-size: 11px;
+}
+
+.crop-advice.recommend { color: #4caf50; }
+.crop-advice.restrict { color: #ffc107; }
+.crop-advice.prohibit { color: #f44336; }
+
+.metal-exceed-tag {
+    display: inline-block;
+    padding: 1px 5px;
+    background: #6e1515;
+    color: #f85149;
+    border-radius: 3px;
+    font-size: 10px;
+    margin: 1px 2px;
+}
+
+/* 时间线模态框 */
+.timeline-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.timeline-modal-content {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    width: 95%;
+    max-width: 1100px;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.timeline-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid #21262d;
+}
+
+.timeline-modal-header h2 {
+    font-size: 18px;
+    color: #e6edf3;
+    margin: 0;
+}
+
+.timeline-modal-body {
+    padding: 16px 20px;
+}
+
+.timeline-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+.timeline-controls label {
+    font-size: 13px;
+    color: #8b949e;
+}
+
+.timeline-controls select {
+    background: #161b22;
+    color: #c9d1d9;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 12px;
+    min-width: 200px;
+}
+
+#timelineCanvas {
+    width: 100%;
+    height: 400px;
+    background: #0a0d12;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+}
+
+.epoch-info {
+    margin-top: 12px;
+    background: #161b22;
+    border: 1px solid #21262d;
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 13px;
+    color: #c9d1d9;
+}
+
+.epoch-info h3 {
+    font-size: 15px;
+    color: #58a6ff;
+    margin: 0 0 6px 0;
+}
+
+/* 控制按钮高亮样式 */
+.control-btn.accent {
+    background: linear-gradient(135deg, #1a4b8c, #2563eb);
+    color: #fff;
+    border-color: #2563eb;
+}
+
+.control-btn.accent:hover {
+    background: linear-gradient(135deg, #2563eb, #3b82f6);
+}

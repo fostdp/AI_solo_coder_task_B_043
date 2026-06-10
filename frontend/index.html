@@ -70,6 +70,27 @@
                 <div class="map-controls">
                     <button class="control-btn" onclick="resetMapView()">🌍 重置视图</button>
                     <button class="control-btn" onclick="refreshData()">🔄 刷新数据</button>
+                    <button class="control-btn accent" onclick="openTimelineModal()">📜 冶炼史时间线</button>
+                </div>
+            </div>
+
+            <!-- 时间线对比模态框 -->
+            <div class="timeline-modal" id="timelineModal" style="display:none;">
+                <div class="timeline-modal-content">
+                    <div class="timeline-modal-header">
+                        <h2>📜 全球冶炼史时间线对比</h2>
+                        <button class="close-btn" onclick="closeTimelineModal()">✕</button>
+                    </div>
+                    <div class="timeline-modal-body">
+                        <div class="timeline-controls">
+                            <label>选择遗址：</label>
+                            <select id="timelineSiteSelect" multiple size="5"></select>
+                            <button class="control-btn" onclick="loadTimelineData()">加载对比</button>
+                            <button class="control-btn" onclick="toggleTimelineAnimation()">▶ 播放动画</button>
+                        </div>
+                        <canvas id="timelineCanvas" width="900" height="400"></canvas>
+                        <div id="timelineEpochInfo" class="epoch-info"></div>
+                    </div>
                 </div>
             </div>
 
@@ -85,6 +106,9 @@
                         <button class="tab active" data-tab="trend" onclick="switchTab('trend')">📈 浓度趋势</button>
                         <button class="tab" data-tab="fingerprint" onclick="switchTab('fingerprint')">🔬 污染指纹</button>
                         <button class="tab" data-tab="remediation" onclick="switchTab('remediation')">🏗️ 修复方案</button>
+                        <button class="tab" data-tab="smelting" onclick="switchTab('smelting')">🔥 工艺反演</button>
+                        <button class="tab" data-tab="farmsafety" onclick="switchTab('farmsafety')">🌾 农田安全</button>
+                        <button class="tab" data-tab="slag" onclick="switchTab('slag')">♻️ 矿渣利用</button>
                     </div>
                     <div class="tab-content">
                         <div class="tab-pane active" id="tab-trend">
@@ -98,6 +122,15 @@
                         <div class="tab-pane" id="tab-remediation">
                             <div id="remediationContent"></div>
                         </div>
+                        <div class="tab-pane" id="tab-smelting">
+                            <div id="smeltingContent"></div>
+                        </div>
+                        <div class="tab-pane" id="tab-farmsafety">
+                            <div id="farmsafetyContent"></div>
+                        </div>
+                        <div class="tab-pane" id="tab-slag">
+                            <div id="slagContent"></div>
+                        </div>
                     </div>
                 </div>
             </aside>
@@ -107,6 +140,10 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="pollution_map.js"></script>
     <script src="site_detail.js"></script>
+    <script src="smelting_process.js"></script>
+    <script src="farm_safety.js"></script>
+    <script src="slag_recycle.js"></script>
+    <script src="timeline_compare.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

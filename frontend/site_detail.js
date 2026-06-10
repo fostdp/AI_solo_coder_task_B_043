@@ -27,42 +27,88 @@
 
         show(site) {
             currentSite = site;
-            document.getElementById('detailName').textContent = site.name;
-            const subtitle = `遗址#${site.id} · ${site.metal_type}冶炼 · ${site.era} · ${site.country}`;
-            document.getElementById('detailSubtitle').textContent = subtitle;
+            var header = document.getElementById('siteHeader');
+            if (header) {
+                var pi = site.pollution_index || 0;
+                var cls = piClass(pi);
+                var cat = piCategory(pi);
+                header.innerHTML = '<h2 class="site-name">' + site.name + '</h2>' +
+                    '<div class="site-meta">遗址#' + site.id + ' · ' + site.metal_type + '冶炼 · ' + (site.era || '') + ' · ' + site.country + '</div>' +
+                    '<div class="site-pi"><span class="pi-value ' + cls + '">' + pi.toFixed(2) + '</span> <span class="pi-category ' + cls + '">' + cat + '</span></div>';
+            }
 
-            const pi = site.pollution_index || 0;
-            const piEl = document.getElementById('piValue');
-            piEl.textContent = pi.toFixed(2);
-            const cls = piClass(pi);
-            piEl.className = 'pi-value ' + cls;
-            document.getElementById('piCategory').textContent = piCategory(pi);
-            document.getElementById('piCategory').className = 'pi-category ' + cls;
+            document.getElementById('panelPlaceholder').style.display = 'none';
+            document.getElementById('panelContent').style.display = '';
 
             activateTab('trend');
             loadAll(site.id);
-
-            document.getElementById('detailPanel').classList.add('visible');
-            document.getElementById('detailEmpty').style.display = 'none';
         },
 
         close() {
-            document.getElementById('detailPanel').classList.remove('visible');
-            document.getElementById('detailEmpty').style.display = 'block';
+            document.getElementById('panelContent').style.display = 'none';
+            document.getElementById('panelPlaceholder').style.display = '';
             currentSite = null;
+            slagData = null;
         },
 
         getCurrentSite() { return currentSite; }
     };
 
+    let slagData = null;
+
+    async function loadSlagData(siteId) {
+        var container = document.getElementById('slagContent');
+        if (!container) return;
+        if (slagData && slagData.site_id === siteId) return;
+        container.innerHTML = '<div style="color:#8b949e;font-size:12px;text-align:center;padding:20px;">加载中...</div>';
+        try {
+            var data = await global.SlagRecycle.load(siteId);
+            if (data) {
+                slagData = data;
+                global.SlagRecycle.render(data, container);
+            } else {
+                container.innerHTML = '<div style="color:#8b949e;font-size:12px;text-align:center;padding:20px;">暂无矿渣数据</div>';
+            }
+        } catch (e) {
+            container.innerHTML = '<div style="color:#f85149;font-size:12px;text-align:center;padding:20px;">加载失败</div>';
+        }
+    }
+
     // ====== Tab 切换 ======
     function activateTab(name) {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-        const btn = document.querySelector(`.tab-btn[data-tab="${name}"]`);
+        document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(c => c.classList.remove('active'));
+        const btn = document.querySelector(`.tab[data-tab="${name}"]`);
         if (btn) btn.classList.add('active');
         const panel = document.getElementById('tab-' + name);
         if (panel) panel.classList.add('active');
+        if (name === 'smelting' && currentSite) loadSmeltingData(currentSite.id);
+        if (name === 'farmsafety' && currentSite) loadFarmSafetyData(currentSite.id);
+        if (name === 'slag' && currentSite) loadSlagData(currentSite.id);
+    }
+
+    async function loadSmeltingData(siteId) {
+        const container = document.getElementById('smeltingContent');
+        if (!container) return;
+        container.innerHTML = '<div style="color:#8b949e;text-align:center;padding:20px;">加载中...</div>';
+        try {
+            const data = await SmeltingProcess.load(siteId);
+            SmeltingProcess.render(data, container);
+        } catch (e) {
+            container.innerHTML = '<div style="color:#f85149;font-size:12px;text-align:center;padding:20px;">冶炼工艺反演数据加载失败</div>';
+        }
+    }
+
+    async function loadFarmSafetyData(siteId) {
+        const container = document.getElementById('farmsafetyContent');
+        if (!container) return;
+        container.innerHTML = '<div style="color:#8b949e;text-align:center;padding:20px;">加载中...</div>';
+        try {
+            const data = await FarmSafety.load(siteId);
+            FarmSafety.render(data, container);
+        } catch (e) {
+            container.innerHTML = '<div style="color:#f85149;font-size:12px;text-align:center;padding:20px;">农田安全评估数据加载失败</div>';
+        }
     }
 
     // ====== 加载所有数据 ======
@@ -340,7 +386,7 @@
 
     // ====== Tab事件绑定（页面加载后） ======
     function bindTabEvents() {
-        document.querySelectorAll('.tab-btn').forEach(btn => {
+        document.querySelectorAll('.tab').forEach(btn => {
             btn.addEventListener('click', () => activateTab(btn.dataset.tab));
         });
         const close = document.getElementById('closeDetail');
@@ -353,5 +399,6 @@
     }
 
     global.SiteDetail = SiteDetail;
+    global._siteDetailSwitchTab = function (name) { activateTab(name); };
 
 })(typeof window !== 'undefined' ? window : this);

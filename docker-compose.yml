@@ -1,47 +1,262 @@
+# =========================================
+# 古代金属冶炼遗址污染指纹识别系统
+# Docker Compose 编排文件 v2 (工程化版)
+#
+# 服务列表:
+#   postgis     - PostgreSQL 16 + PostGIS 3.4（空间数据库）
+#   backend     - Go 后端服务（4模块 + EventBus）
+#   nginx       - Nginx（Gzip + 反向代理 + 静态资源）
+#   prometheus  - Prometheus（指标监控）
+#   simulator   - XRF 数据模拟器（30遗址 + 可配置污染特征）
+#
+# 启动命令: docker compose up -d --build
+# 停止命令: docker compose down
+# 查看日志: docker compose logs -f [service]
+# =========================================
+
 version: '3.8'
 
+# =========================================
+# 自定义网络（二层隔离）
+# =========================================
+networks:
+  app-tier:       # 业务网络：postgis, backend, nginx, simulator
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+  monitoring-tier:  # 监控网络：backend, prometheus
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.21.0.0/16
+
+# =========================================
+# 数据卷（持久化）
+# =========================================
+volumes:
+  postgis_data:       # PostgreSQL 数据
+  prometheus_data:    # Prometheus 时序数据
+  nginx_cache:        # Nginx 缓存（可选）
+
+# =========================================
+# 服务定义
+# =========================================
 services:
+
+  # =========================================
+  # 1. PostgreSQL + PostGIS 空间数据库
+  # =========================================
   postgis:
     image: postgis/postgis:16-3.4
     container_name: archaeology-postgis
+    hostname: postgis
+    restart: unless-stopped
+    networks:
+      - app-tier
     environment:
       POSTGRES_DB: archaeology_pollution
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      # 工程化：PostgreSQL 性能调优
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --lc-collate=C --lc-ctype=C"
+      PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - postgis_data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      # 初始化脚本（表结构 + 索引 + 种子数据）
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      # 性能配置（可选，覆盖默认 postgresql.conf）
+      # - ./database/postgresql.conf:/etc/postgresql/postgresql.conf
+    # command: postgres -c config_file=/etc/postgresql/postgresql.conf
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d archaeology_pollution"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
 
+  # =========================================
+  # 2. Go 后端服务
+  # =========================================
   backend:
-    build: ./backend
+    build:
+      context: .                    # 关键：构建上下文是项目根目录
+      dockerfile: backend/Dockerfile
     container_name: archaeology-backend
+    hostname: backend
+    restart: unless-stopped
+    networks:
+      - app-tier
+      - monitoring-tier
     environment:
+      # 数据库连接
       DB_HOST: postgis
       DB_PORT: 5432
       DB_USER: postgres
-      DB_PASSWORD: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: archaeology_pollution
+      DB_SSLMODE: disable
+      # 服务配置
       SERVER_PORT: 8080
+      GIN_MODE: release             # 生产模式，禁用 debug 日志
+      # SMTP 配置（告警邮件）
+      SMTP_HOST: ${SMTP_HOST:-smtp.example.com}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-alert@example.com}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-yourpassword}
+      SMTP_FROM: ${SMTP_FROM:-alert@example.com}
+      ALERT_RECIPIENTS: ${ALERT_RECIPIENTS:-admin@example.com}
     ports:
-      - "8080:8080"
+      - "${SERVER_PORT:-8080}:8080"  # API
+      - "${PPROF_PORT:-6060}:6060"    # pprof
+      - "${METRICS_PORT:-2112}:2112"  # Prometheus
     depends_on:
       postgis:
         condition: service_healthy
     volumes:
-      - ./frontend:/app/frontend
+      # 挂载前端（让 Go 也能提供静态资源，兼容旧模式）
+      - ./frontend:/frontend:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
 
-  simulator:
-    build: ./simulator
-    container_name: archaeology-simulator
+  # =========================================
+  # 3. Nginx（前端 + Gzip + 反向代理）
+  # =========================================
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: archaeology-nginx
+    hostname: nginx
+    restart: unless-stopped
+    networks:
+      - app-tier
+      - monitoring-tier
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "${HTTP_PORT:-80}:80"       # 前端 + API 统一入口
+      - "8081:8081"                  # Nginx 状态（内部监控）
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      # 前端静态资源（生产环境可预构建后挂载）
+      - ./frontend:/usr/share/nginx/html:ro
+      # Nginx 日志挂载到宿主机（便于排查）
+      - ./logs/nginx:/var/log/nginx
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:80/healthz || exit 1"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
+  # =========================================
+  # 4. Prometheus 监控
+  # =========================================
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: archaeology-prometheus
+    hostname: prometheus
+    restart: unless-stopped
+    networks:
+      - monitoring-tier
+    environment:
+      TZ: Asia/Shanghai
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'     # 保留 30 天数据
+      - '--storage.tsdb.retention.size=10GB'    # 最大 10GB
+      - '--web.enable-lifecycle'                # 允许热加载配置
+      - '--web.enable-admin-api'
+    ports:
+      - "${PROM_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
     depends_on:
       - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
-volumes:
-  postgis_data:
+  # =========================================
+  # 5. XRF 数据模拟器
+  # =========================================
+  simulator:
+    build:
+      context: .                    # 构建上下文是项目根目录
+      dockerfile: simulator/Dockerfile
+    container_name: archaeology-simulator
+    hostname: simulator
+    restart: unless-stopped
+    networks:
+      - app-tier
+    environment:
+      TZ: Asia/Shanghai
+      # 核心配置
+      API_BASE: ${SIM_API_BASE:-http://backend:8080}
+      SIM_NUM_SITES: ${SIM_NUM_SITES:-30}           # 遗址数量（默认30）
+      SIM_REPORT_INTERVAL: ${SIM_REPORT_INTERVAL:-30}  # 上报间隔（秒）
+      SIM_START_YEAR: ${SIM_START_YEAR:-2015}       # 历史数据起始年
+      SIM_HISTORY_YEARS: ${SIM_HISTORY_YEARS:-10}   # 历史数据年数
+      SIM_CONTINUOUS: ${SIM_CONTINUOUS:-true}       # 是否持续上报
+      SIM_VERBOSE: ${SIM_VERBOSE:-true}             # 详细日志
+      # 污染特征注入（可选，覆盖默认值）
+      # 格式: 金属类型_属性=值，多个用逗号分隔
+      # 示例: 铜_Pb=600,铜_Cu=15000,汞_Hg=400
+      SIM_PROFILE_OVERRIDES: ${SIM_PROFILE_OVERRIDES:-}
+    depends_on:
+      backend:
+        condition: service_healthy
+    # 不映射端口，内部服务
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M

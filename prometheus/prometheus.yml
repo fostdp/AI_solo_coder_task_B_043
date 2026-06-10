@@ -1,0 +1,67 @@
+# =========================================
+# Prometheus 配置文件
+# 抓取目标：backend(:2112)、nginx(:8081)、prometheus自身
+# =========================================
+
+global:
+  scrape_interval:     15s      # 默认抓取间隔
+  evaluation_interval: 15s      # 规则评估间隔
+  scrape_timeout:      10s
+
+# 告警规则文件（可选）
+# rule_files:
+#   - "alerts.yml"
+
+# 抓取配置
+scrape_configs:
+  # =========================================
+  # Prometheus 自身监控
+  # =========================================
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+
+  # =========================================
+  # Go 后端服务（业务指标）
+  # =========================================
+  - job_name: 'backend'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['backend:2112']
+        labels:
+          service: 'archaeology-backend'
+          module:  'go-service'
+
+    # 指标重标记（可选）
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        regex: '(.*):.*'
+        replacement: '${1}'
+
+  # =========================================
+  # Nginx 状态监控
+  # =========================================
+  - job_name: 'nginx'
+    metrics_path: '/nginx_status'
+    static_configs:
+      - targets: ['nginx:8081']
+        labels:
+          service: 'nginx'
+
+  # =========================================
+  # PostgreSQL 监控（如果以后加 postgres_exporter）
+  # =========================================
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres_exporter:9187']
+  #       labels:
+  #         service: 'postgresql'
+
+# =========================================
+# 远程写入（可选，对接 VictoriaMetrics / Thanos）
+# =========================================
+# remote_write:
+#   - url: "http://victoria:8428/api/v1/write"

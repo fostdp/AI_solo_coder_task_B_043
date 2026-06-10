@@ -17,22 +17,28 @@ import (
 // Handler 聚合所有业务模块
 // 各模块之间通过 EventBus 以 Channel 方式解耦通信
 type Handler struct {
-	xrf        *modules.XRFReceiver
+	xrf         *modules.XRFReceiver
 	fingerprint *modules.FingerprintAnalyzer
 	remediation *modules.RemediationAdvisor
-	alarm      *modules.AlarmMailer
+	alarm       *modules.AlarmMailer
+	inversion   *modules.ProcessInversionModule
+	farm        *modules.FarmSafetyModule
+	slag        *modules.SlagRecycleModule
+	timeline    *modules.TimelineCompareModule
 }
 
-// NewHandler 初始化所有业务模块
-// 各模块启动时自动订阅 EventBus 中的事件
 func NewHandler() *Handler {
 	h := &Handler{
 		xrf:         modules.NewXRFReceiver(),
 		fingerprint: modules.NewFingerprintAnalyzer(),
 		remediation: modules.NewRemediationAdvisor(),
 		alarm:       modules.NewAlarmMailer(),
+		inversion:   modules.NewProcessInversionModule(),
+		farm:        modules.NewFarmSafetyModule(),
+		slag:        modules.NewSlagRecycleModule(),
+		timeline:    modules.NewTimelineCompareModule(),
 	}
-	log.Println("[Handlers] All modules initialized via EventBus channel communication")
+	log.Println("[Handlers] All modules initialized (8 modules: XRF+Fingerprint+Remediation+Alarm+Inversion+Farm+Slag+Timeline)")
 	return h
 }
 
@@ -373,4 +379,172 @@ func (h *Handler) GetStats(c *gin.Context) {
 			"pending_alerts":      h.alarm.PendingCount(),
 		},
 	})
+}
+
+// ====================================
+// 冶炼工艺反演（ProcessInversionModule）
+// ====================================
+
+func (h *Handler) InvertSmeltingProcess(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid site ID"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 20*time.Second)
+	defer cancel()
+
+	measurements, err := repository.GetXRFMeasurements(ctx, id, 10)
+	if err != nil || len(measurements) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no XRF data found for site"})
+		return
+	}
+
+	slag, _ := repository.GetSlagComposition(ctx, id, 0)
+
+	result, err := h.inversion.InvertProcess(ctx, id, measurements, slag)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if result.Inversion.SiteID > 0 {
+		repoID, repoErr := repository.SaveSmeltingInversion(ctx, &result.Inversion)
+		if repoErr == nil {
+			result.Inversion.ID = repoID
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"site_id": id, "data": result})
+}
+
+// ====================================
+// 农田土壤安全评估（FarmSafetyModule）
+// ====================================
+
+func (h *Handler) AssessFarmSafety(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid site ID"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	farmlands, err := repository.GetFarmlandSoilsBySite(ctx, id, 100)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(farmlands) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no farmland soil data found for site"})
+		return
+	}
+
+	result, err := h.farm.AssessFarmSafety(ctx, id, farmlands)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"site_id": id, "data": result})
+}
+
+// ====================================
+// 矿渣资源化利用（SlagRecycleModule）
+// ====================================
+
+func (h *Handler) AssessSlagRecycle(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid site ID"})
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+
+	slag, err := repository.GetSlagComposition(ctx, id, 0)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if slag == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no slag composition data found for site"})
+		return
+	}
+
+	result, err := h.slag.AssessRecycle(ctx, id, slag)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if result.Assessment != nil && result.Assessment.SiteID > 0 {
+		repoID, repoErr := repository.SaveResourceAssessment(ctx, result.Assessment)
+		if repoErr == nil {
+			result.Assessment.ID = repoID
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{"site_id": id, "data": result})
+}
+
+// ====================================
+// 多遗址时间线对比（TimelineCompareModule）
+// ====================================
+
+func (h *Handler) CompareTimelines(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+
+	var siteIDs []int
+	if ids := c.Query("site_ids"); ids != "" {
+		for _, s := range splitIDs(ids) {
+			if id, err := strconv.Atoi(s); err == nil {
+				siteIDs = append(siteIDs, id)
+			}
+		}
+	}
+
+	allTrendData, err := repository.GetAllTrendData(ctx)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(siteIDs) == 0 {
+		for id := range allTrendData {
+			siteIDs = append(siteIDs, id)
+		}
+	}
+
+	filteredData := make(map[int][]models.TrendData)
+	for _, id := range siteIDs {
+		if data, ok := allTrendData[id]; ok {
+			filteredData[id] = data
+		}
+	}
+
+	result, err := h.timeline.CompareTimelines(ctx, siteIDs, filteredData)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"data": result})
+}
+
+func splitIDs(s string) []string {
+	var result []string
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == ',' {
+			part := s[start:i]
+			if part != "" {
+				result = append(result, part)
+			}
+			start = i + 1
+		}
+	}
+	return result
 }
