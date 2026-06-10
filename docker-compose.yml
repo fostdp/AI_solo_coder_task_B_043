@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  postgis:
+    image: postgis/postgis:16-3.4
+    container_name: archaeology-postgis
+    environment:
+      POSTGRES_DB: archaeology_pollution
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    container_name: archaeology-backend
+    environment:
+      DB_HOST: postgis
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: archaeology_pollution
+      SERVER_PORT: 8080
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgis:
+        condition: service_healthy
+    volumes:
+      - ./frontend:/app/frontend
+
+  simulator:
+    build: ./simulator
+    container_name: archaeology-simulator
+    depends_on:
+      - backend
+
+volumes:
+  postgis_data:
