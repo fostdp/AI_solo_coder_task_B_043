@@ -5,6 +5,8 @@ let canvasCtx;
 let sites = [];
 let currentSite = null;
 let allSites = [];
+let clusters = [];
+let isClusteringEnabled = false;
 
 const METAL_COLORS = {
     'Pb': '#6ea8fe',
@@ -93,6 +95,160 @@ function resizeCanvas() {
     canvas.style.height = container.clientHeight + 'px';
 }
 
+function getClusterGridSize(zoom) {
+    if (zoom <= 3) return 120;
+    if (zoom <= 4) return 100;
+    if (zoom <= 5) return 80;
+    return 60;
+}
+
+function shouldUseClustering(zoom) {
+    return zoom <= 5;
+}
+
+function buildClusters(filteredSites, gridSize) {
+    const clusterMap = new Map();
+    const clusters = [];
+
+    filteredSites.forEach(site => {
+        const point = map.latLngToContainerPoint([site.latitude, site.longitude]);
+        if (!point) return;
+
+        if (point.x < -100 || point.x > canvas.width + 100 || 
+            point.y < -100 || point.y > canvas.height + 100) {
+            return;
+        }
+
+        const gridX = Math.floor(point.x / gridSize);
+        const gridY = Math.floor(point.y / gridSize);
+        const key = `${gridX},${gridY}`;
+
+        if (!clusterMap.has(key)) {
+            const cluster = {
+                x: 0,
+                y: 0,
+                sites: [],
+                maxPollutionIndex: 0,
+                gridX: gridX,
+                gridY: gridY,
+                count: 0
+            };
+            clusterMap.set(key, cluster);
+            clusters.push(cluster);
+        }
+
+        const cluster = clusterMap.get(key);
+        cluster.sites.push(site);
+        cluster.x += point.x;
+        cluster.y += point.y;
+        cluster.count++;
+        if (site.pollution_index > cluster.maxPollutionIndex) {
+            cluster.maxPollutionIndex = site.pollution_index;
+        }
+
+        site._canvasX = point.x;
+        site._canvasY = point.y;
+    });
+
+    clusters.forEach(cluster => {
+        cluster.x /= cluster.count;
+        cluster.y /= cluster.count;
+        cluster.radius = getClusterRadius(cluster.count);
+    });
+
+    return clusters;
+}
+
+function getClusterRadius(count) {
+    if (count <= 2) return 18;
+    if (count <= 5) return 24;
+    if (count <= 10) return 30;
+    if (count <= 20) return 36;
+    return 42;
+}
+
+function drawCluster(cluster) {
+    const color = getPollutionColor(cluster.maxPollutionIndex);
+    const radius = cluster.radius;
+    const x = cluster.x;
+    const y = cluster.y;
+
+    canvasCtx.beginPath();
+    canvasCtx.arc(x + 2, y + 2, radius, 0, Math.PI * 2);
+    canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    canvasCtx.fill();
+
+    const gradient = canvasCtx.createRadialGradient(x, y, 0, x, y, radius);
+    gradient.addColorStop(0, color);
+    gradient.addColorStop(0.6, color);
+    gradient.addColorStop(1, adjustColor(color, -40));
+    canvasCtx.beginPath();
+    canvasCtx.arc(x, y, radius, 0, Math.PI * 2);
+    canvasCtx.fillStyle = gradient;
+    canvasCtx.fill();
+
+    canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+    canvasCtx.lineWidth = 2;
+    canvasCtx.stroke();
+
+    canvasCtx.fillStyle = '#fff';
+    canvasCtx.font = 'bold 13px sans-serif';
+    canvasCtx.textAlign = 'center';
+    canvasCtx.textBaseline = 'middle';
+    canvasCtx.fillText(cluster.count.toString(), x, y - 1);
+
+    canvasCtx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+    canvasCtx.font = '9px sans-serif';
+    canvasCtx.fillText('处遗址', x, y + 12);
+
+    cluster._canvasX = x;
+    cluster._canvasY = y;
+    cluster._canvasRadius = radius;
+}
+
+function drawSiteMarker(site, zoom) {
+    const point = { x: site._canvasX, y: site._canvasY };
+    if (!point.x || !point.y) return;
+
+    if (point.x < -50 || point.x > canvas.width + 50 || 
+        point.y < -50 || point.y > canvas.height + 50) {
+        return;
+    }
+
+    const baseRadius = SCALE_RADIUS[site.scale] || 8;
+    const scaleFactor = Math.max(0.5, Math.min(1.5, (zoom - 2) / 4 + 0.5));
+    const radius = baseRadius * scaleFactor;
+    const color = getPollutionColor(site.pollution_index);
+
+    canvasCtx.beginPath();
+    canvasCtx.arc(point.x + 2, point.y + 2, radius, 0, Math.PI * 2);
+    canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    canvasCtx.fill();
+
+    const gradient = canvasCtx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+    gradient.addColorStop(0, color);
+    gradient.addColorStop(0.7, color);
+    gradient.addColorStop(1, adjustColor(color, -30));
+    canvasCtx.beginPath();
+    canvasCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+    canvasCtx.fillStyle = gradient;
+    canvasCtx.fill();
+
+    canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    canvasCtx.lineWidth = 1.5;
+    canvasCtx.stroke();
+
+    if (radius >= 10) {
+        canvasCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        canvasCtx.font = `bold ${Math.max(8, radius * 0.5)}px sans-serif`;
+        canvasCtx.textAlign = 'center';
+        canvasCtx.textBaseline = 'middle';
+        canvasCtx.fillText(getMetalIcon(site.metal_type), point.x, point.y);
+    }
+
+    site._canvasRadius = radius;
+}
+
 function drawSitesOnCanvas() {
     if (!canvasCtx || sites.length === 0) return;
 
@@ -100,52 +256,25 @@ function drawSitesOnCanvas() {
 
     const filters = getActiveFilters();
     const zoom = map.getZoom();
+    const filteredSites = sites.filter(site => shouldShowSite(site, filters));
 
-    sites.forEach(site => {
-        if (!shouldShowSite(site, filters)) return;
+    isClusteringEnabled = shouldUseClustering(zoom);
 
-        const point = map.latLngToContainerPoint([site.latitude, site.longitude]);
-        if (!point) return;
-
-        if (point.x < -50 || point.x > canvas.width + 50 || point.y < -50 || point.y > canvas.height + 50) {
-            return;
-        }
-
-        const baseRadius = SCALE_RADIUS[site.scale] || 8;
-        const scaleFactor = Math.max(0.5, Math.min(1.5, (zoom - 2) / 4 + 0.5));
-        const radius = baseRadius * scaleFactor;
-        const color = getPollutionColor(site.pollution_index);
-
-        canvasCtx.beginPath();
-        canvasCtx.arc(point.x + 2, point.y + 2, radius, 0, Math.PI * 2);
-        canvasCtx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-        canvasCtx.fill();
-
-        const gradient = canvasCtx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
-        gradient.addColorStop(0, color);
-        gradient.addColorStop(0.7, color);
-        gradient.addColorStop(1, adjustColor(color, -30));
-        canvasCtx.beginPath();
-        canvasCtx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-        canvasCtx.fillStyle = gradient;
-        canvasCtx.fill();
-
-        canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-        canvasCtx.lineWidth = 1.5;
-        canvasCtx.stroke();
-
-        if (radius >= 10) {
-            canvasCtx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-            canvasCtx.font = `bold ${Math.max(8, radius * 0.5)}px sans-serif`;
-            canvasCtx.textAlign = 'center';
-            canvasCtx.textBaseline = 'middle';
-            canvasCtx.fillText(getMetalIcon(site.metal_type), point.x, point.y);
-        }
-
-        site._canvasX = point.x;
-        site._canvasY = point.y;
-        site._canvasRadius = radius;
-    });
+    if (isClusteringEnabled) {
+        const gridSize = getClusterGridSize(zoom);
+        clusters = buildClusters(filteredSites, gridSize);
+        clusters.forEach(cluster => drawCluster(cluster));
+    } else {
+        clusters = [];
+        filteredSites.forEach(site => {
+            const point = map.latLngToContainerPoint([site.latitude, site.longitude]);
+            if (point) {
+                site._canvasX = point.x;
+                site._canvasY = point.y;
+                drawSiteMarker(site, zoom);
+            }
+        });
+    }
 }
 
 function getMetalIcon(metalType) {
@@ -183,6 +312,37 @@ function handleCanvasClick(e) {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    if (isClusteringEnabled && clusters.length > 0) {
+        let clickedCluster = null;
+        let minDist = Infinity;
+
+        clusters.forEach(cluster => {
+            if (cluster._canvasX === undefined) return;
+            const dx = x - cluster._canvasX;
+            const dy = y - cluster._canvasY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist <= (cluster._canvasRadius + 5) && dist < minDist) {
+                minDist = dist;
+                clickedCluster = cluster;
+            }
+        });
+
+        if (clickedCluster) {
+            const currentZoom = map.getZoom();
+            const newZoom = Math.min(currentZoom + 2, map.getMaxZoom());
+            
+            if (clickedCluster.sites.length === 1) {
+                showSiteDetail(clickedCluster.sites[0]);
+            } else {
+                map.setView([
+                    (clickedCluster.sites.reduce((sum, s) => sum + s.latitude, 0) / clickedCluster.sites.length),
+                    (clickedCluster.sites.reduce((sum, s) => sum + s.longitude, 0) / clickedCluster.sites.length)
+                ], newZoom);
+            }
+            return;
+        }
+    }
+
     let clickedSite = null;
     let minDist = Infinity;
 
@@ -208,15 +368,28 @@ function handleCanvasHover(e) {
     const y = e.clientY - rect.top;
 
     let isHovering = false;
-    sites.forEach(site => {
-        if (site._canvasX === undefined) return;
-        const dx = x - site._canvasX;
-        const dy = y - site._canvasY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist <= (site._canvasRadius + 5)) {
-            isHovering = true;
-        }
-    });
+
+    if (isClusteringEnabled && clusters.length > 0) {
+        clusters.forEach(cluster => {
+            if (cluster._canvasX === undefined) return;
+            const dx = x - cluster._canvasX;
+            const dy = y - cluster._canvasY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist <= (cluster._canvasRadius + 5)) {
+                isHovering = true;
+            }
+        });
+    } else {
+        sites.forEach(site => {
+            if (site._canvasX === undefined) return;
+            const dx = x - site._canvasX;
+            const dy = y - site._canvasY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist <= (site._canvasRadius + 5)) {
+                isHovering = true;
+            }
+        });
+    }
 
     canvas.style.cursor = isHovering ? 'pointer' : 'default';
 }
