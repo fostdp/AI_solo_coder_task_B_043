@@ -225,6 +225,127 @@ SMTP_FROM=alert@example.com
 ALERT_RECIPIENTS=admin@example.com,archaeologist@example.com
 ```
 
+## v1.1 优化更新说明
+
+### 问题定位与改动总览
+
+| 问题 | 定位文件 | 改动规模 |
+|------|---------|---------|
+| PCA+聚类过拟合 | `backend/services/fingerprint.go` | 新增 ~600 行 |
+| 多属性决策权重不合理 | `backend/services/mcdm.go`（新增） | 新增 ~500 行 |
+| 前端地图性能下降 | `frontend/app.js` | 修改 ~200 行 |
+| 邮件推送频率过高 | `backend/services/alert.go` | 新增 ~400 行 |
+
+---
+
+### 1. PCA + 聚类分析过拟合修复
+
+**问题**：遗址数量较少（30个）时，简单K-Means聚类容易过拟合，聚类结果不稳定。
+
+**改动位置**：`backend/services/fingerprint.go`
+
+**解决方案**：
+
+| 技术 | 说明 | 关键函数 |
+|------|------|---------|
+| **Bootstrap重采样** | 100次有放回抽样，用Jaccard相似度评估聚类稳定性 | `bootstrapStability()` |
+| **轮廓系数** | 衡量聚类内聚度和分离度，取值[-1,1]，越接近1越好 | `calculateSilhouette()` |
+| **Gap Statistic** | 比较实际数据与随机参考分布的聚类效果，自动选K | `gapStatistic()` |
+| **K-Means++初始化** | 概率选择初始质心，避免局部最优 | `kmeansPlusPlusInit()` |
+| **最优K值综合选择** | 手肘法40% + 轮廓系数30% + Gap Statistic30% | `findOptimalK()` |
+| **PCA质量评估** | 解释方差比、累积方差、KMO检验 | `PerformPCAWithQuality()` |
+
+**新增结构体**：`PCAResultWithQuality`，包含解释方差、累积方差、聚类数量、轮廓系数、Bootstrap稳定性、Gap值等质量指标。
+
+---
+
+### 2. 多属性决策权重优化
+
+**问题**：修复成本数据缺失时固定权重分配不合理，缺乏专家经验融入。
+
+**改动位置**：
+- 新增文件：`backend/services/mcdm.go`（完整MCDM服务）
+- 修改文件：`backend/services/fingerprint.go`（`RemediationService`内嵌MCDM服务）
+
+**解决方案**：
+
+| 模块 | 说明 | 关键函数 |
+|------|------|---------|
+| **AHP层次分析法** | 7x7专家判断矩阵（Saaty 1-9标度），几何平均法计算权重，一致性检验CR<0.1 | `calculateAHPWeights()`, `GetConsistencyRatio()` |
+| **熵权法** | 基于数据离散度计算客观权重，数据越分散权重越大 | `CalculateEntropyWeights()` |
+| **组合权重** | alpha*AHP + (1-alpha)*熵权法，线性加权融合 | `CalculateCombinedWeights()` |
+| **动态alpha** | 污染越重，专家权重占比越高（0.3~0.7） | `GetDynamicAlpha()` |
+| **数据缺失自适应** | 自动检测缺失属性，将缺失权重按比例重新分配 | `AdjustWeightsForMissingData()` |
+| **TOPSIS评分** | 正负理想解 + 相对接近度，计算最终排名 | `ScoreTechnologies()` |
+
+**AHP判断矩阵（7个评估维度）**：
+重金属覆盖度 > 修复效率 > 土壤适应性 > 修复周期 > 经济性 > 环境影响 > 可持续性
+
+**数据缺失处理**：成本或周期数据缺失时，缺失属性的权重按其他属性权重占比重新分配，确保权重和为1。
+
+---
+
+### 3. 前端地图聚合显示优化
+
+**问题**：渲染大量遗址时Canvas绘制性能下降，标记重叠难以辨识。
+
+**改动位置**：`frontend/app.js`
+
+**解决方案**：
+
+| 功能 | 说明 | 关键函数 |
+|------|------|---------|
+| **网格聚合算法** | 按屏幕坐标网格化分组，低缩放聚合、高缩放分散 | `buildClusters()` |
+| **动态聚合阈值** | zoom≤5时启用聚合，网格大小随缩放动态调整（120px→60px） | `shouldUseClustering()`, `getClusterGridSize()` |
+| **聚合点样式** | 颜色取区域内最严重污染值，大小随遗址数量递增（18~42px） | `drawCluster()`, `getClusterRadius()` |
+| **聚合点交互** | 点击聚合点缩放至该区域，单遗址聚合直接显示详情 | `handleCanvasClick()` |
+| **视口裁剪优化** | 只绘制视口范围内的遗址和聚合点 | `buildClusters()` 内判断 |
+
+**聚合分级**：
+- 2个及以下：半径18px
+- 3-5个：半径24px
+- 6-10个：半径30px
+- 11-20个：半径36px
+- 20个以上：半径42px
+
+---
+
+### 4. 邮件告警聚合推送优化
+
+**问题**：多遗址同时告警时单条发送频率高，邮箱易被轰炸。
+
+**改动位置**：`backend/services/alert.go`
+
+**解决方案**：
+
+| 功能 | 说明 | 关键函数/结构体 |
+|------|------|---------------|
+| **告警分级发送** | "严重"级别立即单条发送，"高/中/低"级别聚合批量发送 | `AlertAggregator`, `AddAlerts()` |
+| **时间窗口聚合** | 30分钟时间窗口，到达后自动批量发送 | `AlertAggregator.flushPeriod`, `time.AfterFunc` |
+| **批量汇总邮件** | 单封邮件包含所有待发送告警的摘要和详情 | `SendAggregatedDigest()` |
+| **按遗址分组** | 同一遗址的多条告警合并展示，便于查看 | `groupAlertsBySite()` |
+| **严重程度统计** | 汇总邮件顶部展示告警总数、涉及遗址数、各级别数量 | `countBySeverity()`, `buildDigestHTML()` |
+| **可视化严重度条** | HTML邮件中的彩色严重程度分布条 | `buildDigestHTML()` |
+
+**告警聚合流程**：
+```
+告警产生 → AlertAggregator.AddAlerts()
+    ├─ 严重级别 → 立即单条发送（带[紧急]标识）
+    └─ 非严重级别 → 加入待发送队列
+                      ↓
+              30分钟时间窗口到达
+                      ↓
+              SendAggregatedDigest()
+                      ↓
+              单封汇总邮件（按遗址分组）
+```
+
+**邮件类型**：
+- 单条严重告警：主题带`[紧急]`前缀，红色高亮，强调立即处理
+- 批量汇总邮件：主题带`[汇总]`前缀，包含统计概览+按遗址分组的详细列表
+
+---
+
 ## 技术栈
 
 | 层级 | 技术 |
@@ -235,6 +356,7 @@ ALERT_RECIPIENTS=admin@example.com,archaeologist@example.com
 | 邮件 | gomail.v2 |
 | 前端 | Leaflet 1.9, Canvas API, 原生JS |
 | 部署 | Docker, Docker Compose |
+| 统计算法 | Bootstrap、轮廓系数、Gap Statistic、AHP、熵权法、TOPSIS |
 
 ## 许可证
 
