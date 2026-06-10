@@ -14,6 +14,27 @@ type TimelineCompareModule struct {
 	bus *EventBus
 }
 
+type ClimateZoneProfile struct {
+	Name            string
+	LatitudeMin     float64
+	LatitudeMax     float64
+	MeanTempC       float64
+	MeanRainMM      float64
+	TypicalSoilPH   float64
+	LeachingBase    float64 // 基础淋溶速率
+	RetentionBase   float64 // 基础持留率
+}
+
+var climateZoneProfiles = []ClimateZoneProfile{
+	{"热带季风", 0, 23.5, 25.0, 1500, 5.5, 1.4, 0.5},
+	{"亚热带湿润", 23.5, 35, 17.0, 1200, 6.0, 1.2, 0.6},
+	{"温带半湿润", 35, 45, 10.0, 700, 7.0, 0.9, 0.8},
+	{"温带干旱", 35, 50, 8.0, 300, 8.0, 0.5, 1.1},
+	{"寒温带", 45, 70, 0.0, 500, 6.5, 0.6, 1.0},
+	{"地中海气候", 30, 45, 16.0, 600, 7.5, 0.8, 0.9},
+	{"热带沙漠", 15, 30, 28.0, 100, 8.5, 0.3, 1.3},
+}
+
 type CivilizationEpochExtended struct {
 	EpochName     string   `json:"epoch_name"`
 	YearRange     string   `json:"year_range"`
@@ -54,7 +75,13 @@ func (t *TimelineCompareModule) CompareTimelines(
 		}
 	}
 
-	alignedYears, normalizedData := t.normalizeAndInterpolate(siteIDs, allMeasurements)
+	// ========== Step 0: 计算各遗址气候校正因子 ==========
+	climateReport := t.computeClimateCorrection(siteIDs, siteInfoMap, allMeasurements)
+
+	// 应用气候校正到测量数据（修正指纹漂移）
+	correctedMeasurements := t.applyClimateCorrection(allMeasurements, climateReport)
+
+	alignedYears, normalizedData := t.normalizeAndInterpolate(siteIDs, correctedMeasurements)
 
 	allPeaks := t.detectPeaks(siteIDs, alignedYears, normalizedData, siteInfoMap)
 	_ = t.clusterPeaks(allPeaks)
@@ -82,6 +109,7 @@ func (t *TimelineCompareModule) CompareTimelines(
 		Peaks:              allPeaks,
 		CivilizationEpochs: epochs,
 		GlobalTrend:        globalTrend,
+		ClimateCorrection:  climateReport,
 	}
 
 	return result, nil
@@ -580,4 +608,247 @@ func intToStr(n int) string {
 		digits = append([]rune{'-'}, digits...)
 	}
 	return string(digits)
+}
+
+// computeClimateCorrection 计算各遗址的气候校正因子
+// 解决不同区域气候导致的重金属指纹保留率差异和峰位漂移问题
+// 原理：高温多雨→淋溶快→表观峰位偏晚、峰值偏低；干旱少雨→淋溶慢→表观峰位偏早、峰值偏高
+func (t *TimelineCompareModule) computeClimateCorrection(
+	siteIDs []int,
+	siteInfo map[int]*models.Site,
+	allMeasurements map[int][]models.TrendData,
+) *models.ClimateCorrectionReport {
+
+	factors := make(map[int]models.ClimateSiteFactor)
+	climateZones := make(map[int]string)
+	driftMagnitude := make(map[int]float64)
+
+	for _, id := range siteIDs {
+		site, ok := siteInfo[id]
+		if !ok || site == nil {
+			continue
+		}
+
+		// 基于纬度确定气候带（模拟，实际可接入真实气候数据库）
+		lat := math.Abs(site.Latitude)
+		var profile ClimateZoneProfile
+		for _, p := range climateZoneProfiles {
+			if lat >= p.LatitudeMin && lat < p.LatitudeMax {
+				profile = p
+				break
+			}
+		}
+		if profile.Name == "" {
+			profile = ClimateZoneProfile{"温带半湿润", 35, 45, 10.0, 700, 7.0, 0.9, 0.8}
+		}
+		climateZones[id] = profile.Name
+
+		// 从实际测量数据中提取pH和有机质（如果有）
+		avgPH := profile.TypicalSoilPH
+		avgOM := 2.0
+		measurements, hasData := allMeasurements[id]
+		if hasData && len(measurements) > 0 {
+			sumPH := 0.0
+			sumOM := 0.0
+			countPH := 0
+			countOM := 0
+			for _, m := range measurements {
+				if m.PH > 0 {
+					sumPH += m.PH
+					countPH++
+				}
+				if m.OrganicMatter > 0 {
+					sumOM += m.OrganicMatter
+					countOM++
+				}
+			}
+			if countPH > 0 {
+				avgPH = sumPH / float64(countPH)
+			}
+			if countOM > 0 {
+				avgOM = sumOM / float64(countOM)
+			}
+		}
+
+		// ========== 计算淋溶速率 ==========
+		// 温度每升高10℃，反应速率约加倍（Arrhenius）
+		tempFactor := math.Pow(2.0, (profile.MeanTempC-10.0)/10.0)
+		// 降雨量非线性影响：>1000mm后淋溶加速
+		rainFactor := 0.5 + profile.MeanRainMM/1000.0
+		if rainFactor < 0.3 {
+			rainFactor = 0.3
+		}
+		// pH影响：酸性(pH<6)加速重金属溶出，碱性(pH>8)抑制
+		phFactor := 1.0
+		if avgPH < 6.0 {
+			phFactor = 1.0 + (6.0-avgPH)*0.2
+		} else if avgPH > 8.0 {
+			phFactor = math.Max(0.3, 1.0-(avgPH-8.0)*0.2)
+		}
+		// 有机质络合：高OM降低淋溶
+		omFactor := math.Max(0.5, 1.0-avgOM/10.0)
+
+		leachingRate := profile.LeachingBase * tempFactor * rainFactor * phFactor * omFactor
+		if leachingRate < 0.2 {
+			leachingRate = 0.2
+		}
+		if leachingRate > 2.5 {
+			leachingRate = 2.5
+		}
+
+		// ========== 计算持留因子（保留率）==========
+		retentionFactor := profile.RetentionBase * (1.0 / leachingRate) * 0.8
+		if retentionFactor < 0.3 {
+			retentionFactor = 0.3
+		}
+		if retentionFactor > 1.5 {
+			retentionFactor = 1.5
+		}
+
+		// ========== 计算指纹峰位偏移（年） ==========
+		// 淋溶越快，重金属向下迁移越快→地层中保存的峰值年代偏年轻（偏晚）
+		// 经验公式：淋溶速率每增加0.1，峰值偏移约-20年（偏晚20年）
+		peakYearShift := int(-(leachingRate - 0.9) * 200)
+		if peakYearShift > 300 {
+			peakYearShift = 300
+		}
+		if peakYearShift < -300 {
+			peakYearShift = -300
+		}
+
+		// ========== 计算峰值振幅衰减系数 ==========
+		// 淋溶越快，峰值越被平滑、振幅越小
+		amplitudeDamp := math.Max(0.3, 1.0-(leachingRate-0.5)*0.5)
+
+		// ========== 综合校正系数 ==========
+		// 以温带半湿润（leaching≈0.9）为基准
+		overallCorrection := 1.0 / retentionFactor
+		if overallCorrection < 0.5 {
+			overallCorrection = 0.5
+		}
+		if overallCorrection > 2.0 {
+			overallCorrection = 2.0
+		}
+
+		factors[id] = models.ClimateSiteFactor{
+			SiteID:            id,
+			ClimateZone:       profile.Name,
+			MeanAnnualTempC:   profile.MeanTempC,
+			MeanAnnualRainMM:  profile.MeanRainMM,
+			SoilPH:            roundFloat(avgPH, 2),
+			LeachingRate:      roundFloat(leachingRate, 4),
+			RetentionFactor:   roundFloat(retentionFactor, 4),
+			OverallCorrection: roundFloat(overallCorrection, 4),
+			PeakYearShift:     peakYearShift,
+			AmplitudeDamp:     roundFloat(amplitudeDamp, 4),
+		}
+
+		// 漂移量百分比（相对于基准）
+		driftMagnitude[id] = roundFloat(math.Abs(1.0-overallCorrection)*100.0, 2)
+	}
+
+	// 校正后置信度：漂移量越大，置信度越低
+	avgDrift := 0.0
+	if len(driftMagnitude) > 0 {
+		for _, v := range driftMagnitude {
+			avgDrift += v
+		}
+		avgDrift /= float64(len(driftMagnitude))
+	}
+	confidenceAfterCorr := math.Max(0.3, 1.0-avgDrift/100.0*0.7)
+
+	// 校正说明
+	note := "基于纬度气候带+土壤pH+有机质估算淋溶速率，校正指纹峰位漂移和振幅衰减"
+	if avgDrift > 30 {
+		note += "；不同区域气候差异较大（平均漂移>30%），建议结合考古地层学交叉验证"
+	} else if avgDrift > 15 {
+		note += "；不同区域存在中等气候差异，校正结果可靠性中等"
+	} else {
+		note += "；区域气候较为均一，校正结果可靠性较高"
+	}
+
+	return &models.ClimateCorrectionReport{
+		Method:              "ClimateZone_Latitudinal_LeachingModel",
+		CorrectionFactors:   factors,
+		ClimateZones:        climateZones,
+		DriftMagnitude:      driftMagnitude,
+		ConfidenceAfterCorr: roundFloat(confidenceAfterCorr, 4),
+		CorrectionNote:      note,
+	}
+}
+
+// applyClimateCorrection 将气候校正因子应用于原始测量数据
+// 修正内容：1) 峰值年代偏移  2) 振幅恢复（反衰减）  3) 整体浓度按持留因子缩放
+func (t *TimelineCompareModule) applyClimateCorrection(
+	allMeasurements map[int][]models.TrendData,
+	report *models.ClimateCorrectionReport,
+) map[int][]models.TrendData {
+
+	if report == nil {
+		return allMeasurements
+	}
+
+	corrected := make(map[int][]models.TrendData)
+
+	for siteID, measurements := range allMeasurements {
+		factor, ok := report.CorrectionFactors[siteID]
+		if !ok {
+			corrected[siteID] = measurements
+			continue
+		}
+
+		correctedData := make([]models.TrendData, len(measurements))
+		for i, m := range measurements {
+			// 峰位偏移：校正年份（向左/向右平移）
+			correctedYear := m.Year - factor.PeakYearShift
+
+			// 振幅恢复：除以衰减系数（恢复被淋溶抹平的峰值）
+			amplitudeRestore := 1.0
+			if factor.AmplitudeDamp > 0.1 {
+				amplitudeRestore = 1.0 / factor.AmplitudeDamp
+			}
+			// 限制在合理范围
+			if amplitudeRestore > 2.5 {
+				amplitudeRestore = 2.5
+			}
+			if amplitudeRestore < 0.5 {
+				amplitudeRestore = 0.5
+			}
+
+			// 整体浓度按持留因子缩放
+			corrFactor := factor.OverallCorrection * 0.7 + amplitudeRestore * 0.3
+			if corrFactor < 0.5 {
+				corrFactor = 0.5
+			}
+			if corrFactor > 2.0 {
+				corrFactor = 2.0
+			}
+
+			correctedData[i] = models.TrendData{
+				Year:           correctedYear,
+				Pb:             m.Pb * corrFactor,
+				Zn:             m.Zn * corrFactor,
+				Cu:             m.Cu * corrFactor,
+				As:             m.As * corrFactor,
+				Hg:             m.Hg * corrFactor,
+				Cd:             m.Cd * corrFactor,
+				PollutionIndex: m.PollutionIndex * corrFactor,
+				PH:             m.PH,
+				OrganicMatter:  m.OrganicMatter,
+				CEC:            m.CEC,
+				SoilMoisture:   m.SoilMoisture,
+				MeasurementDate: m.MeasurementDate,
+				Metals:         m.Metals,
+			}
+		}
+		corrected[siteID] = correctedData
+	}
+
+	return corrected
+}
+
+// roundFloat 工具：四舍五入到指定小数位
+func roundFloat(v float64, digits int) float64 {
+	pow := math.Pow(10, float64(digits))
+	return math.Round(v*pow) / pow
 }

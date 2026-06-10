@@ -369,6 +369,23 @@ type FarmSafetyAssessmentResult struct {
 	MaxEri              float64                       `json:"max_eri"`
 	TotalRI             float64                       `json:"total_ri"`
 	Summary             string                        `json:"summary"`
+	SpatialUncertainty  *SpatialUncertaintyReport     `json:"spatial_uncertainty,omitempty"`
+}
+
+type SpatialUncertaintyReport struct {
+	InterpolationMethod   string                   `json:"interpolation_method"`
+	KrigingNugget         float64                  `json:"kriging_nugget"`
+	KrigingSill           float64                  `json:"kriging_sill"`
+	KrigingRange          float64                  `json:"kriging_range"`
+	KrigingModel          string                   `json:"kriging_model"`
+	PredictionGrid        []map[string]interface{} `json:"prediction_grid"`
+	StdErrorGrid          []map[string]interface{} `json:"std_error_grid"`
+	SampleSparsityWarning bool                     `json:"sample_sparsity_warning"`
+	EffectiveSampleCount  int                      `json:"effective_sample_count"`
+	AvgPredictionStdErr   float64                  `json:"avg_prediction_std_err"`
+	DataQualityNote       string                   `json:"data_quality_note"`
+	InterpolatedRI        []float64                `json:"interpolated_ri,omitempty"`
+	InterpolatedRI95CI    [][]float64              `json:"interpolated_ri_95ci,omitempty"`
 }
 
 // ============== 矿渣成分 ==============
@@ -560,6 +577,31 @@ type TimelineComparisonResult struct {
 	Peaks             []TimelinePeak           `json:"peaks"`
 	CivilizationEpochs []CivilizationEpoch     `json:"civilization_epochs"`
 	GlobalTrend       map[string][]float64     `json:"global_trend"`
+	ClimateCorrection *ClimateCorrectionReport `json:"climate_correction,omitempty"`
+}
+
+type ClimateCorrectionReport struct {
+	Method              string                    `json:"method"`
+	CorrectionFactors   map[int]ClimateSiteFactor `json:"site_factors"`
+	CorrectedTrends     map[int][]float64         `json:"corrected_trends,omitempty"`
+	ClimateZones        map[int]string            `json:"site_climate_zones"`
+	UncorrectedPeaks    []TimelinePeak            `json:"uncorrected_peaks,omitempty"`
+	DriftMagnitude      map[int]float64           `json:"drift_magnitude_pct"`
+	ConfidenceAfterCorr float64                   `json:"confidence_after_correction"`
+	CorrectionNote      string                    `json:"correction_note"`
+}
+
+type ClimateSiteFactor struct {
+	SiteID            int     `json:"site_id"`
+	ClimateZone       string  `json:"climate_zone"`
+	MeanAnnualTempC   float64 `json:"mean_annual_temp_c"`
+	MeanAnnualRainMM  float64 `json:"mean_annual_rain_mm"`
+	SoilPH            float64 `json:"soil_ph"`
+	LeachingRate      float64 `json:"leaching_rate"`     // 金属淋溶速率因子
+	RetentionFactor   float64 `json:"retention_factor"`  // 土壤持留因子
+	OverallCorrection float64 `json:"overall_correction"` // 综合校正系数
+	PeakYearShift     int     `json:"peak_year_shift"`    // 指纹峰位偏移（年）
+	AmplitudeDamp     float64 `json:"amplitude_dampening"` // 指纹峰幅衰减系数
 }
 
 // ============== 矿渣详细结果 ==============
@@ -588,4 +630,53 @@ type SlagRecycleResult struct {
 	CementChecks  []CementStandardCheck    `json:"cement_checks"`
 	RoadChecks    []RoadStandardCheck      `json:"road_checks"`
 	ProcessFlow   []map[string]interface{} `json:"process_flow"`
+	AcceleratedTests *AcceleratedTestReport `json:"accelerated_tests,omitempty"`
+	ConservativeEstimate *ConservativeEstimate `json:"conservative_estimate,omitempty"`
+}
+
+type AcceleratedTestReport struct {
+	TestMethod      string                   `json:"test_method"`
+	TestConditions  map[string]interface{}   `json:"test_conditions"`
+	CementLongTerm  *CementLongTermResult    `json:"cement_long_term,omitempty"`
+	RoadDurability  *RoadDurabilityResult    `json:"road_durability,omitempty"`
+	LeachingLongTerm *LeachingLongTermResult `json:"leaching_long_term,omitempty"`
+	AgingFactor     float64                  `json:"aging_factor"`
+	TestDurationDays int                     `json:"test_duration_days"`
+	EquivalentYears float64                  `json:"equivalent_years"`
+	ReliabilityNote string                   `json:"reliability_note"`
+}
+
+type CementLongTermResult struct {
+	Activity90d      float64 `json:"activity_90d"`
+	Activity180d     float64 `json:"activity_180d"`
+	Activity1yr      float64 `json:"activity_1yr"`
+	StrengthLossRate float64 `json:"strength_loss_rate_pct"`
+	SoundnessOK      bool    `json:"soundness_ok"`
+	ExpansionRatePct float64 `json:"expansion_rate_pct"`
+}
+
+type RoadDurabilityResult struct {
+	FreezeThaw100Cycles float64 `json:"freeze_thaw_100cyc_loss_pct"`
+	WetDry50Cycles      float64 `json:"wet_dry_50cyc_loss_pct"`
+	Abrasion100000Pass  float64 `json:"abrasion_100kpass_loss_pct"`
+	ResidualCBR         float64 `json:"residual_cbr_after_aging"`
+	LongTermGrade       string  `json:"long_term_grade"`
+}
+
+type LeachingLongTermResult struct {
+	After1yrWetDry      map[string]float64 `json:"after_1yr_wet_dry"`
+	After10yrExtrapolated map[string]float64 `json:"after_10yr_extrapolated"`
+	MobilizationFactor  map[string]float64 `json:"mobilization_factor"`
+	RiskLevelAfterAging string            `json:"risk_level_after_aging"`
+}
+
+type ConservativeEstimate struct {
+	UseConservativeLimits bool                     `json:"use_conservative_limits"`
+	SafetyMarginPct       float64                  `json:"safety_margin_pct"`
+	CementScoreConservative float64                `json:"cement_score_conservative"`
+	RoadScoreConservative   float64                `json:"road_score_conservative"`
+	RecommendedUseConservative string              `json:"recommended_use_conservative"`
+	UncertaintyFactors   []string                 `json:"uncertainty_factors"`
+	PrecautionMeasures   []string                 `json:"precaution_measures"`
+	DataGapWarning       string                   `json:"data_gap_warning"`
 }

@@ -22,6 +22,23 @@ type ProcessInversionModule struct {
 	bayCfg  config.BayesianConfig
 }
 
+type MorphologyFeature struct {
+	GlassPhaseIndex    float64
+	MineralAssemblage  string
+	CoolingRateEstimate float64
+	TextureScore       float64
+}
+
+type MultiSourceFusionResult struct {
+	XRFSignalWeight     float64
+	SlagChemWeight      float64
+	SlagMorphologyWeight float64
+	FusedTemperature    float64
+	FusedAgentProbs     map[string]float64
+	DisagreementLevel   float64
+	AmbiguityNote       string
+}
+
 // NewProcessInversionModule 创建冶炼工艺反演模块实例
 func NewProcessInversionModule() *ProcessInversionModule {
 	m := &ProcessInversionModule{
@@ -45,6 +62,9 @@ func (m *ProcessInversionModule) InvertProcess(
 	// ========== Step 1: 构建8维输入特征向量 ==========
 	features, nValid, slagCompleteness := m.buildFeatureVector(measurements, slag)
 
+	// ========== Step 1.5: 提取炉渣形态特征（多源数据融合） ==========
+	morphology := m.extractMorphologyFeatures(slag)
+
 	// ========== Step 2: BPNN神经网络前向传播 ==========
 	hidden1 := m.forwardLayer(features, m.weights["w1"], m.biases["b1"], true)
 	hidden2 := m.forwardLayer(hidden1, m.weights["w2"], m.biases["b2"], true)
@@ -67,22 +87,34 @@ func (m *ProcessInversionModule) InvertProcess(
 	// ========== Step 3: 贝叶斯后验概率修正 ==========
 	bayesPosterior := m.bayesianCorrection(siteID, slag, bpnnAgentProbs)
 
+	// ========== Step 3.5: 多源数据融合（XRF指纹 + 矿渣化学 + 矿渣形态） ==========
+	fusion := m.fuseMultiSourceData(estimatedTemp, bayesPosterior, morphology, slag, nValid, slagCompleteness)
+
 	// ========== Step 4: 温度-工艺-年代映射 ==========
 	processType, eraEstimate := m.mapTempToProcess(estimatedTemp)
 
 	// ========== Step 5: 质量评估 ==========
 	tempConfidence := math.Min(0.98, 0.5+0.1*float64(nValid)+0.05*slagCompleteness)
 
+	// 使用融合后的概率而非原始贝叶斯后验
+	finalAgentProbs := fusion.FusedAgentProbs
+
 	var agentConfidence float64
 	var bestAgent string
 	maxPosterior := 0.0
-	for i, agent := range config.ReducingAgents {
-		if bayesPosterior[agent] > maxPosterior {
-			maxPosterior = bayesPosterior[agent]
+	for agent, prob := range finalAgentProbs {
+		if prob > maxPosterior {
+			maxPosterior = prob
 			bestAgent = agent
 		}
 	}
 	agentConfidence = maxPosterior
+
+	// 若多源融合降低温度结果，若有歧义则降级置信度
+	if fusion.DisagreementLevel > 0.5 {
+		tempConfidence *= (1.0 - fusion.DisagreementLevel*0.4)
+		agentConfidence *= (1.0 - fusion.DisagreementLevel*0.4)
+	}
 
 	var qualityLevel string
 	if tempConfidence > 0.8 && agentConfidence > 0.8 {
@@ -94,20 +126,28 @@ func (m *ProcessInversionModule) InvertProcess(
 	}
 
 	// ========== Step 6: 生成温度分布直方图数据（10个区间，500-1600℃） ==========
-	tempDistribution := m.generateTempDistribution(estimatedTemp, tempConfidence)
+	tempDistribution := m.generateTempDistribution(fusion.FusedTemperature, tempConfidence)
 
 	// ========== Step 7: 组装结果 ==========
 	inputFeatures := map[string]interface{}{
-		"pb_zn_ratio":     features[0],
-		"cu_pb_ratio":     features[1],
-		"as_hg_ratio":     features[2],
-		"cd_zn_ratio":     features[3],
-		"cu_as_ratio":     features[4],
-		"cao_sio2_ratio":  features[5],
-		"feo_total":       features[6],
-		"so3_content":     features[7],
-		"n_valid_features": nValid,
-		"slag_completeness": slagCompleteness,
+		"pb_zn_ratio":        features[0],
+		"cu_pb_ratio":        features[1],
+		"as_hg_ratio":        features[2],
+		"cd_zn_ratio":        features[3],
+		"cu_as_ratio":        features[4],
+		"cao_sio2_ratio":     features[5],
+		"feo_total":        features[6],
+		"so3_content":        features[7],
+		"n_valid_features":    nValid,
+		"slag_completeness":   slagCompleteness,
+		"morphology_glass":    morphology.GlassPhaseIndex,
+		"morphology_texture":  morphology.TextureScore,
+		"morphology_cooling":  morphology.CoolingRateEstimate,
+		"fusion_xrf_weight":    fusion.XRFSignalWeight,
+		"fusion_chem_weight":   fusion.SlagChemWeight,
+		"fusion_morph_weight":  fusion.SlagMorphologyWeight,
+		"fusion_disagreement": fusion.DisagreementLevel,
+		"fusion_ambiguity":     fusion.AmbiguityNote,
 	}
 
 	agentProbsMap := make(map[string]float64)
@@ -117,7 +157,7 @@ func (m *ProcessInversionModule) InvertProcess(
 
 	inversion := models.SmeltingProcessInversion{
 		SiteID:                  siteID,
-		EstimatedTemperature:    estimatedTemp,
+		EstimatedTemperature:    fusion.FusedTemperature,
 		TemperatureConfidence:   tempConfidence,
 		ReducingAgent:           bestAgent,
 		ReducingAgentConfidence: agentConfidence,
@@ -125,13 +165,14 @@ func (m *ProcessInversionModule) InvertProcess(
 			"temperature": tempNorm,
 			"agents":      agentProbsMap,
 		},
-		BayesPosterior:      bayesPosterior,
+		BayesPosterior:      finalAgentProbs,
 		ProcessTypeDetailed: processType,
 		ProcessEraEstimate:  eraEstimate,
 		InputFeatures:       inputFeatures,
 		BPNNMSE:             0.0,
-		BayesKLD:            m.calculateKLDivergence(bpnnAgentProbs, bayesPosterior),
+		BayesKLD:            m.calculateKLDivergence(bpnnAgentProbs, finalAgentProbs),
 		QualityLevel:        qualityLevel,
+		Remark:              fusion.AmbiguityNote,
 	}
 
 	networkInfo := models.BPNNNetworkInfo{
@@ -149,7 +190,7 @@ func (m *ProcessInversionModule) InvertProcess(
 		Inversion:             inversion,
 		NetworkInfo:           networkInfo,
 		TemperatureDistribution: tempDistribution,
-		AgentProbabilities:    bayesPosterior,
+		AgentProbabilities:    finalAgentProbs,
 	}
 
 	// Step 7 (后续): 保存到 repository
@@ -259,6 +300,242 @@ func (m *ProcessInversionModule) buildFeatureVector(
 	}
 
 	return features, nValid, slagCompleteness
+}
+
+// extractMorphologyFeatures 从矿渣矿物相组成提取炉渣形态特征
+// 用于多源数据融合，解决仅靠XRF指纹时特征重叠导致的误判
+func (m *ProcessInversionModule) extractMorphologyFeatures(slag *models.SlagComposition) MorphologyFeature {
+	morph := MorphologyFeature{
+		GlassPhaseIndex:    0.5,
+		MineralAssemblage:  "unknown",
+		CoolingRateEstimate: 0.5,
+		TextureScore:       0.5,
+	}
+
+	if slag == nil {
+		return morph
+	}
+
+	// 1. 玻璃相指数：玻璃相含量越高 → 冷却越快（高温快速淬火）
+	glassPhase := slag.GlassPhase
+	if glassPhase < 0 {
+		glassPhase = 0
+	}
+	if glassPhase > 100 {
+		glassPhase = 100
+	}
+	morph.GlassPhaseIndex = glassPhase / 100.0
+
+	// 2. 冷却速率估计：玻璃相+磁铁矿(快速冷却结晶)多 → 快冷；硅灰石/钙长石多 → 慢冷
+	fastCoolIndicators := glassPhase + slag.Magnetite*2.0
+	slowCoolIndicators := slag.Wollastonite + slag.Anorthite + slag.Diopside
+	totalMineral := fastCoolIndicators + slowCoolIndicators + 0.01
+	morph.CoolingRateEstimate = math.Min(1.0, fastCoolIndicators/totalMineral)
+
+	// 3. 矿物组合类型判定
+	switch {
+	case slag.Fayalite > 30 && slag.GlassPhase < 20:
+		morph.MineralAssemblage = "fayalite_slow" // 铁橄榄石为主→低温慢冷→块炼法
+	case slag.Wollastonite > 25 && slag.Anorthite > 15:
+		morph.MineralAssemblage = "wollastonite_anorthite" // 硅灰石+钙长石→中温→生铁冶炼
+	case slag.GlassPhase > 40:
+		morph.MineralAssemblage = "glass_quenched" // 高玻璃相→高温淬火→高温液态冶炼
+	case slag.Diopside > 20:
+		morph.MineralAssemblage = "diopside_basic" // 透辉石→高碱度→高炉工艺
+	default:
+		morph.MineralAssemblage = "mixed"
+	}
+
+	// 4. 织构评分：矿物相组成多样性越高（但不极端），织构信息越丰富
+	mineralPhases := []float64{
+		slag.Fayalite, slag.Wollastonite, slag.Anorthite,
+		slag.Diopside, slag.Magnetite, slag.Hematite, slag.Wuestite,
+	}
+	nonZeroCount := 0
+	sumVar := 0.0
+	meanMin := 0.0
+	for _, v := range mineralPhases {
+		if v > 1 {
+			nonZeroCount++
+		}
+		sumVar += v
+		meanMin += v
+	}
+	if nonZeroCount > 0 {
+		meanMin /= float64(len(mineralPhases))
+		variance := 0.0
+		for _, v := range mineralPhases {
+			variance += (v - meanMin) * (v - meanMin)
+		}
+		variance /= float64(len(mineralPhases))
+		// 3-5种主要矿相 → 织构清晰；极端单一或极端分散 → 模糊
+		diversityScore := float64(nonZeroCount) / 4.0
+		if diversityScore > 1.0 {
+			diversityScore = 1.0
+		}
+		morph.TextureScore = 0.5*diversityScore + 0.5*(1.0-math.Min(1.0, variance/1000.0))
+	}
+	if morph.TextureScore > 1.0 {
+		morph.TextureScore = 1.0
+	}
+	if morph.TextureScore < 0 {
+		morph.TextureScore = 0
+	}
+
+	return morph
+}
+
+// fuseMultiSourceData 多源数据融合
+// 融合 XRF指纹信号、矿渣化学成分、矿渣形态特征 三个来源
+// 通过加权D-S证据理论风格的融合，解决单一指纹重叠导致的误判
+func (m *ProcessInversionModule) fuseMultiSourceData(
+	nnTemp float64,
+	bayesProbs map[string]float64,
+	morph MorphologyFeature,
+	slag *models.SlagComposition,
+	nValid int,
+	slagCompleteness float64,
+) MultiSourceFusionResult {
+
+	fusion := MultiSourceFusionResult{
+		FusedTemperature: nnTemp,
+		FusedAgentProbs:   make(map[string]float64),
+	}
+
+	// ========== 1. 计算各数据源权重 ==========
+	// XRF指纹权重：有效特征数量越多，权重越高
+	xrfWeight := 0.3 + 0.5*math.Min(1.0, float64(nValid)/8.0)
+
+	// 矿渣化学权重：矿渣数据完整度越高，权重越高
+	chemWeight := 0.2 + 0.5*slagCompleteness
+
+	// 矿渣形态权重：织构评分（即信息清晰度）越高，权重越高
+	morphWeight := 0.1 + 0.7*morph.TextureScore
+
+	// 归一化权重
+	weightSum := xrfWeight + chemWeight + morphWeight
+	if weightSum < 1e-9 {
+		xrfWeight = 0.5
+		chemWeight = 0.3
+		morphWeight = 0.2
+	} else {
+		xrfWeight /= weightSum
+		chemWeight /= weightSum
+		morphWeight /= weightSum
+	}
+	fusion.XRFSignalWeight = xrfWeight
+	fusion.SlagChemWeight = chemWeight
+	fusion.SlagMorphologyWeight = morphWeight
+
+	// ========== 2. 从形态特征独立估计温度 ==========
+	morphTempEstimate := nnTemp
+	switch morph.MineralAssemblage {
+	case "fayalite_slow":
+		morphTempEstimate = 700 + 200*morph.CoolingRateEstimate // 700-900℃ 块炼法
+	case "wollastonite_anorthite":
+		morphTempEstimate = 1000 + 200*morph.CoolingRateEstimate // 1000-1200℃ 生铁
+	case "glass_quenched":
+		morphTempEstimate = 1200 + 300*morph.CoolingRateEstimate // 1200-1500℃ 高温液态
+	case "diopside_basic":
+		morphTempEstimate = 1300 + 200*morph.CoolingRateEstimate // 1300-1500℃ 高炉
+	default:
+		morphTempEstimate = nnTemp
+	}
+
+	// ========== 3. 从矿渣化学(碱度)独立估计温度 ==========
+	chemTempEstimate := nnTemp
+	if slag != nil {
+		basicity := slag.CaO / (slag.SiO2 + 0.01)
+		totalIron := (slag.FeO + slag.Fe2O3*0.9) / 100.0
+		// 碱度+高铁→高温
+		chemTempEstimate = 700 + basicity*250 + totalIron*400
+		if chemTempEstimate > 1550 {
+			chemTempEstimate = 1550
+		}
+	}
+
+	// ========== 4. 温度加权融合 ==========
+	fusedTemp := xrfWeight*nnTemp + chemWeight*chemTempEstimate + morphWeight*morphTempEstimate
+
+	// ========== 5. 计算多源分歧度 ==========
+	tempStd := math.Sqrt(
+		xrfWeight*(nnTemp-fusedTemp)*(nnTemp-fusedTemp) +
+			chemWeight*(chemTempEstimate-fusedTemp)*(chemTempEstimate-fusedTemp) +
+			morphWeight*(morphTempEstimate-fusedTemp)*(morphTempEstimate-fusedTemp),
+	)
+	disagreement := math.Min(1.0, tempStd/200.0)
+	fusion.DisagreementLevel = disagreement
+
+	// 歧义无意义：记录警告信息
+	if disagreement > 0.6 {
+		fusion.AmbiguityNote = "多源数据存在显著分歧：建议补充矿渣微区分析以确证工艺类型"
+	} else if disagreement > 0.3 {
+		fusion.AmbiguityNote = "多源数据存在中等分歧：结果仅供参考，建议进一步考古验证"
+	} else {
+		fusion.AmbiguityNote = ""
+	}
+
+	// ========== 6. 还原剂概率融合（形态特征校正） ==========
+	// 基于矿渣形态推导的还原剂似然
+	morphAgentLikelihood := map[string]float64{
+		"木炭": 1.0,
+		"焦炭": 1.0,
+		"煤":   1.0,
+		"混合": 1.0,
+	}
+	switch morph.MineralAssemblage {
+	case "fayalite_slow": // 低温块炼→木炭为主
+		morphAgentLikelihood["木炭"] = 2.0
+		morphAgentLikelihood["焦炭"] = 0.5
+		morphAgentLikelihood["煤"] = 0.4
+	case "glass_quenched", "diopside_basic": // 高温高炉→焦炭/煤
+		morphAgentLikelihood["木炭"] = 0.4
+		morphAgentLikelihood["焦炭"] = 1.8
+		morphAgentLikelihood["煤"] = 1.6
+	case "wollastonite_anorthite": // 中生铁→混合或焦炭
+		morphAgentLikelihood["混合"] = 1.5
+		morphAgentLikelihood["焦炭"] = 1.3
+	}
+
+	// 冷却极快也可能是焦炭（鼓风强）
+	if morph.CoolingRateEstimate > 0.7 {
+		morphAgentLikelihood["焦炭"] *= 1.3
+		morphAgentLikelihood["煤"] *= 1.2
+	}
+
+	// 融合：bayes后验(已融合XRF+化学) × 形态似然，再归一化
+	fusedProbs := make(map[string]float64)
+	totalP := 0.0
+	for agent, bayesP := range bayesProbs {
+		likelihood := morphAgentLikelihood[agent]
+		if likelihood < 0.1 {
+			likelihood = 0.1
+		}
+		// 形态权重调制：形态权重高则影响大
+		alpha := morphWeight*1.5 + 0.1
+		if alpha > 1.0 {
+			alpha = 1.0
+		}
+		adjustedLik := math.Pow(likelihood, alpha)
+		fusedProbs[agent] = bayesP * adjustedLik
+		totalP += fusedProbs[agent]
+	}
+
+	// 归一化
+	if totalP > 1e-12 {
+		for agent := range fusedProbs {
+			fusedProbs[agent] /= totalP
+		}
+	} else {
+		for agent := range fusedProbs {
+			fusedProbs[agent] = 0.25
+		}
+	}
+
+	fusion.FusedTemperature = fusedTemp
+	fusion.FusedAgentProbs = fusedProbs
+
+	return fusion
 }
 
 // relu ReLU激活函数 f(x) = max(0, x)
