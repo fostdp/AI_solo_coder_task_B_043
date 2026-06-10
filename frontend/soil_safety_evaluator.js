@@ -468,7 +468,7 @@
         container.appendChild(sec);
     }
 
-    var FarmSafety = {
+    var SoilSafetyEvaluator = {
         setAPIBase: function (url) { API_BASE = url; },
         load: function (siteId) {
             return fetch(API_BASE + '/sites/' + siteId + '/farm-safety')
@@ -492,6 +492,6 @@
         }
     };
 
-    global.FarmSafety = FarmSafety;
+    global.SoilSafetyEvaluator = SoilSafetyEvaluator;
 
 })(typeof window !== 'undefined' ? window : this);

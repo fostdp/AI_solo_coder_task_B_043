@@ -62,10 +62,10 @@
         if (slagData && slagData.site_id === siteId) return;
         container.innerHTML = '<div style="color:#8b949e;font-size:12px;text-align:center;padding:20px;">加载中...</div>';
         try {
-            var data = await global.SlagRecycle.load(siteId);
+            var data = await global.SlagReuseAdvisor.load(siteId);
             if (data) {
                 slagData = data;
-                global.SlagRecycle.render(data, container);
+                global.SlagReuseAdvisor.render(data, container);
             } else {
                 container.innerHTML = '<div style="color:#8b949e;font-size:12px;text-align:center;padding:20px;">暂无矿渣数据</div>';
             }
@@ -83,7 +83,7 @@
         const panel = document.getElementById('tab-' + name);
         if (panel) panel.classList.add('active');
         if (name === 'smelting' && currentSite) loadSmeltingData(currentSite.id);
-        if (name === 'farmsafety' && currentSite) loadFarmSafetyData(currentSite.id);
+        if (name === 'farmsafety' && currentSite) loadSoilSafetyEvaluatorData(currentSite.id);
         if (name === 'slag' && currentSite) loadSlagData(currentSite.id);
     }
 
@@ -99,13 +99,13 @@
         }
     }
 
-    async function loadFarmSafetyData(siteId) {
+    async function loadSoilSafetyEvaluatorData(siteId) {
         const container = document.getElementById('farmsafetyContent');
         if (!container) return;
         container.innerHTML = '<div style="color:#8b949e;text-align:center;padding:20px;">加载中...</div>';
         try {
-            const data = await FarmSafety.load(siteId);
-            FarmSafety.render(data, container);
+            const data = await SoilSafetyEvaluator.load(siteId);
+            SoilSafetyEvaluator.render(data, container);
         } catch (e) {
             container.innerHTML = '<div style="color:#f85149;font-size:12px;text-align:center;padding:20px;">农田安全评估数据加载失败</div>';
         }

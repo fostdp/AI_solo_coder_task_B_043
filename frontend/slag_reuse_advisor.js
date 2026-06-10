@@ -13,7 +13,7 @@
         '其他': '#8b949e'
     };
 
-    var SlagRecycle = {
+    var SlagReuseAdvisor = {
         setAPIBase: function (url) { API_BASE = url; },
         load: function (siteId) {
             return fetch(API_BASE + '/sites/' + siteId + '/slag-recycle')
@@ -615,6 +615,6 @@
         return v.toFixed(3);
     }
 
-    global.SlagRecycle = SlagRecycle;
+    global.SlagReuseAdvisor = SlagReuseAdvisor;
 
 })(typeof window !== 'undefined' ? window : this);

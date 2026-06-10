@@ -1,4 +1,4 @@
-package modules
+package soil_safety_evaluator_test
 
 import (
 	"context"
@@ -6,36 +6,37 @@ import (
 	"testing"
 
 	"archaeology-pollution-system/models"
+	"archaeology-pollution-system/modules/soil_safety_evaluator"
 )
 
-func TestNewFarmSafetyModule(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+func TestNewSoilSafetyEvaluator(t *testing.T) {
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 	if fsm == nil {
-		t.Fatal("NewFarmSafetyModule 返回 nil")
+		t.Fatal("NewSoilSafetyEvaluator 返回 nil")
 	}
-	if len(fsm.geoCfg.BackgroundValues) == 0 {
+	if len(fsm.GeoCfg().BackgroundValues) == 0 {
 		t.Error("地壳背景值未初始化")
 	}
-	if len(fsm.riCfg.ToxicFactors) == 0 {
+	if len(fsm.RICfg().ToxicFactors) == 0 {
 		t.Error("毒性系数未初始化")
 	}
-	if len(fsm.geoLevels) != 7 {
-		t.Errorf("Igeo等级数=%d，期望7", len(fsm.geoLevels))
+	if len(fsm.GeoLevels()) != 7 {
+		t.Errorf("Igeo等级数=%d，期望7", len(fsm.GeoLevels()))
 	}
 }
 
 func TestCalcIgeo(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
 	t.Run("正常计算 - Pb", func(t *testing.T) {
-		igeo, level, desc := fsm.calcIgeo("Pb", 100)
-		bg := fsm.geoCfg.BackgroundValues["Pb"]
-		k := fsm.geoCfg.CorrectionFactor
+		igeo, level, desc := fsm.CalcIgeo("Pb", 100)
+		bg := fsm.GeoCfg().BackgroundValues["Pb"]
+		k := fsm.GeoCfg().CorrectionFactor
 		expected := math.Log2(100.0 / (k * bg))
 		if math.Abs(igeo-expected) > 1e-4 {
 			t.Errorf("Igeo(Pb)=%.4f，期望 %.4f", igeo, expected)
 		}
-		if level < 0 || level >= len(fsm.geoLevels) {
+		if level < 0 || level >= len(fsm.GeoLevels()) {
 			t.Errorf("等级 %d 超出范围", level)
 		}
 		if desc == "" {
@@ -45,7 +46,7 @@ func TestCalcIgeo(t *testing.T) {
 	})
 
 	t.Run("浓度为0 → 负无穷/0级", func(t *testing.T) {
-		igeo, level, _ := fsm.calcIgeo("Pb", 0)
+		igeo, level, _ := fsm.CalcIgeo("Pb", 0)
 		if !math.IsInf(igeo, -1) {
 			t.Errorf("浓度为0时Igeo=%.4f，期望负无穷", igeo)
 		}
@@ -55,15 +56,15 @@ func TestCalcIgeo(t *testing.T) {
 	})
 
 	t.Run("极高浓度 → 最高级", func(t *testing.T) {
-		igeo, level, desc := fsm.calcIgeo("Hg", 1000)
-		if level != len(fsm.geoLevels)-1 {
-			t.Errorf("Hg=1000mg/kg 等级=%d，期望最高级%d", level, len(fsm.geoLevels)-1)
+		igeo, level, desc := fsm.CalcIgeo("Hg", 1000)
+		if level != len(fsm.GeoLevels())-1 {
+			t.Errorf("Hg=1000mg/kg 等级=%d，期望最高级%d", level, len(fsm.GeoLevels())-1)
 		}
 		t.Logf("Hg=1000mg/kg → Igeo=%.4f, 等级=%d, %s", igeo, level, desc)
 	})
 
 	t.Run("不存在的金属", func(t *testing.T) {
-		igeo, level, desc := fsm.calcIgeo("Uranium", 100)
+		igeo, level, desc := fsm.CalcIgeo("Uranium", 100)
 		if igeo != 0 {
 			t.Errorf("未知金属 Igeo=%.4f，期望0", igeo)
 		}
@@ -76,10 +77,12 @@ func TestCalcIgeo(t *testing.T) {
 	})
 
 	t.Run("背景值为0的金属", func(t *testing.T) {
-		origBg := fsm.geoCfg.BackgroundValues
-		fsm.geoCfg.BackgroundValues = map[string]float64{"X": 0}
-		igeo, level, _ := fsm.calcIgeo("X", 100)
-		fsm.geoCfg.BackgroundValues = origBg
+		origCfg := fsm.GeoCfg()
+		newCfg := origCfg
+		newCfg.BackgroundValues = map[string]float64{"X": 0}
+		fsm.SetGeoCfg(newCfg)
+		igeo, level, _ := fsm.CalcIgeo("X", 100)
+		fsm.SetGeoCfg(origCfg)
 		if igeo != 0 {
 			t.Errorf("背景值为0时 Igeo=%.4f，期望0", igeo)
 		}
@@ -89,7 +92,7 @@ func TestCalcIgeo(t *testing.T) {
 	})
 
 	t.Run("校正因子验证", func(t *testing.T) {
-		k := fsm.geoCfg.CorrectionFactor
+		k := fsm.GeoCfg().CorrectionFactor
 		if k != 1.5 {
 			t.Logf("校正因子 k=%.1f（默认应为1.5）", k)
 		}
@@ -97,14 +100,14 @@ func TestCalcIgeo(t *testing.T) {
 }
 
 func TestCalcRI(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
 	t.Run("正常土壤 - 低风险", func(t *testing.T) {
 		fl := models.FarmlandSoil{
 			Pb: 20, Zn: 50, Cu: 30, As: 8,
 			Hg: 0.1, Cd: 0.2, Cr: 40, Ni: 15,
 		}
-		ri, metalEri, maxEri, maxMetal := fsm.calcRI(fl)
+		ri, metalEri, maxEri, maxMetal := fsm.CalcRI(fl)
 		if ri <= 0 {
 			t.Error("RI应为正数")
 		}
@@ -125,7 +128,7 @@ func TestCalcRI(t *testing.T) {
 			Pb: 2000, Zn: 3000, Cu: 1500, As: 200,
 			Hg: 20, Cd: 50, Cr: 300, Ni: 200,
 		}
-		ri, _, maxEri, _ := fsm.calcRI(fl)
+		ri, _, maxEri, _ := fsm.CalcRI(fl)
 		if ri < 600 {
 			t.Errorf("严重污染 RI=%.2f，应≥600", ri)
 		}
@@ -139,9 +142,9 @@ func TestCalcRI(t *testing.T) {
 		fl := models.FarmlandSoil{
 			Hg: 1.0,
 		}
-		ri, metalEri, _, _ := fsm.calcRI(fl)
-		expectedTri := fsm.riCfg.ToxicFactors["Hg"]
-		expectedBn := fsm.riCfg.RefValues["Hg"]
+		ri, metalEri, _, _ := fsm.CalcRI(fl)
+		expectedTri := fsm.RICfg().ToxicFactors["Hg"]
+		expectedBn := fsm.RICfg().RefValues["Hg"]
 		expectedEri := expectedTri * (1.0 / expectedBn)
 		actualEri := metalEri["Hg"]
 		if math.Abs(actualEri-expectedEri) > 0.01 {
@@ -153,7 +156,7 @@ func TestCalcRI(t *testing.T) {
 	})
 
 	t.Run("毒性系数排序验证", func(t *testing.T) {
-		tri := fsm.riCfg.ToxicFactors
+		tri := fsm.RICfg().ToxicFactors
 		if tri["Hg"] <= tri["Cd"] {
 			t.Errorf("Hg毒性系数应高于Cd")
 		}
@@ -164,7 +167,7 @@ func TestCalcRI(t *testing.T) {
 }
 
 func TestClassifyRI(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
 	tests := []struct {
 		ri       float64
@@ -184,7 +187,7 @@ func TestClassifyRI(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := fsm.classifyRI(tt.ri)
+		result := fsm.ClassifyRI(tt.ri)
 		if result != tt.expected {
 			t.Errorf("RI=%.1f → %s，期望 %s", tt.ri, result, tt.expected)
 		}
@@ -192,7 +195,7 @@ func TestClassifyRI(t *testing.T) {
 }
 
 func TestFormatDistanceLabel(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
 	tests := []struct {
 		dist     float64
@@ -212,7 +215,7 @@ func TestFormatDistanceLabel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := fsm.formatDistanceLabel(tt.dist)
+		result := fsm.FormatDistanceLabel(tt.dist)
 		if result != tt.expected {
 			t.Errorf("距离%.0f米 → '%s'，期望 '%s'", tt.dist, result, tt.expected)
 		}
@@ -220,7 +223,7 @@ func TestFormatDistanceLabel(t *testing.T) {
 }
 
 func TestAssessCropRisk(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
 	t.Run("清洁土壤 → 低风险，推荐种植", func(t *testing.T) {
 		fl := models.FarmlandSoil{
@@ -228,7 +231,7 @@ func TestAssessCropRisk(t *testing.T) {
 			Hg: 0.03, Cd: 0.05, Cr: 30, Ni: 10,
 			LandUseType: "旱地",
 		}
-		rec := fsm.assessCropRisk(fl, "旱地")
+		rec := fsm.AssessCropRisk(fl, "旱地")
 		if rec.RiskLevel != "低风险" {
 			t.Errorf("清洁土壤风险等级='%s'，期望'低风险'", rec.RiskLevel)
 		}
@@ -249,7 +252,7 @@ func TestAssessCropRisk(t *testing.T) {
 			Hg: 30, Cd: 80, Cr: 500, Ni: 300,
 			LandUseType: "水田",
 		}
-		rec := fsm.assessCropRisk(fl, "水田")
+		rec := fsm.AssessCropRisk(fl, "水田")
 		if rec.RiskLevel != "高风险" {
 			t.Errorf("重污染风险等级='%s'，期望'高风险'", rec.RiskLevel)
 		}
@@ -264,7 +267,7 @@ func TestAssessCropRisk(t *testing.T) {
 			Hg: 2, Cd: 5, Cr: 100, Ni: 50,
 			LandUseType: "旱地",
 		}
-		rec := fsm.assessCropRisk(fl, "旱地")
+		rec := fsm.AssessCropRisk(fl, "旱地")
 		if rec.RiskLevel != "高风险" && rec.RiskLevel != "中等风险" {
 			t.Logf("中等污染风险等级: %s (超标数: %d, 接近数: %d)",
 				rec.RiskLevel, rec.ExceedCount, rec.CloseCount)
@@ -276,8 +279,8 @@ func TestAssessCropRisk(t *testing.T) {
 			Pb: 200, Zn: 500, Cu: 200, As: 40,
 			Hg: 1, Cd: 3, Cr: 80, Ni: 40,
 		}
-		recPaddy := fsm.assessCropRisk(fl, "水田")
-		recDry := fsm.assessCropRisk(fl, "旱地")
+		recPaddy := fsm.AssessCropRisk(fl, "水田")
+		recDry := fsm.AssessCropRisk(fl, "旱地")
 		if recPaddy.ExceedCount == recDry.ExceedCount {
 			t.Log("水田和旱地超标数相同（可能BCF不同但都超标）")
 		}
@@ -289,7 +292,7 @@ func TestAssessCropRisk(t *testing.T) {
 			Pb: 50, Zn: 100, Cu: 80, As: 15,
 			Hg: 0.2, Cd: 0.5, Cr: 50, Ni: 20,
 		}
-		rec := fsm.assessCropRisk(fl, "未知类型")
+		rec := fsm.AssessCropRisk(fl, "未知类型")
 		if rec.RiskLevel == "" {
 			t.Error("未知土地类型也应有风险评估结果")
 		}
@@ -300,10 +303,10 @@ func TestAssessCropRisk(t *testing.T) {
 			Pb: 100, Zn: 200,
 			LandUseType: "旱地",
 		}
-		rec := fsm.assessCropRisk(fl, "旱地")
+		rec := fsm.AssessCropRisk(fl, "旱地")
 		for _, p := range rec.Predictions {
 			if p.Metal == "Pb" {
-				bcf, _ := fsm.cropCfg.BCF["旱地"]
+				bcf, _ := fsm.CropCfg().BCF["旱地"]
 				expectedConc := 100.0 * bcf["Pb"]
 				if math.Abs(p.PredictedCropConc-expectedConc) > 1e-6 {
 					t.Errorf("Pb预测浓度=%.6f，期望%.6f", p.PredictedCropConc, expectedConc)
@@ -314,7 +317,7 @@ func TestAssessCropRisk(t *testing.T) {
 }
 
 func TestCalcDistanceDecay(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
 	t.Run("多组距离数据", func(t *testing.T) {
 		groups := map[string][]models.FarmlandSoil{
@@ -331,7 +334,7 @@ func TestCalcDistanceDecay(t *testing.T) {
 				{DistanceFromSite: 3000, Pb: 20, Zn: 50, Cu: 30, As: 3, Hg: 0.05, Cd: 0.1, Cr: 30, Ni: 10},
 			},
 		}
-		decay := fsm.calcDistanceDecay(groups)
+		decay := fsm.CalcDistanceDecay(groups)
 		if len(decay) != 4 {
 			t.Errorf("距离衰减组数量=%d，期望4", len(decay))
 		}
@@ -364,7 +367,7 @@ func TestCalcDistanceDecay(t *testing.T) {
 				{DistanceFromSite: 5000, Pb: 30, Zn: 60, Cu: 40, As: 5, Hg: 0.1, Cd: 0.2, Cr: 40, Ni: 15},
 			},
 		}
-		decay := fsm.calcDistanceDecay(groups)
+		decay := fsm.CalcDistanceDecay(groups)
 		if len(decay) != 2 {
 			t.Errorf("缺失组时结果数=%d，期望2", len(decay))
 		}
@@ -372,7 +375,7 @@ func TestCalcDistanceDecay(t *testing.T) {
 
 	t.Run("空输入", func(t *testing.T) {
 		groups := map[string][]models.FarmlandSoil{}
-		decay := fsm.calcDistanceDecay(groups)
+		decay := fsm.CalcDistanceDecay(groups)
 		if len(decay) != 0 {
 			t.Errorf("空输入结果数=%d，期望0", len(decay))
 		}
@@ -380,7 +383,7 @@ func TestCalcDistanceDecay(t *testing.T) {
 }
 
 func TestClassifyOverallRisk(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
 	tests := []struct {
 		maxIgeo  float64
@@ -402,7 +405,7 @@ func TestClassifyOverallRisk(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		level, color := fsm.classifyOverallRisk(tt.maxIgeo, tt.totalRI)
+		level, color := fsm.ClassifyOverallRisk(tt.maxIgeo, tt.totalRI)
 		if level != tt.expected {
 			t.Errorf("Igeo=%.1f, RI=%.0f → %s，期望 %s",
 				tt.maxIgeo, tt.totalRI, level, tt.expected)
@@ -414,7 +417,7 @@ func TestClassifyOverallRisk(t *testing.T) {
 }
 
 func TestAssessFarmSafety(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 	ctx := context.Background()
 
 	t.Run("正常评估 - 多样点", func(t *testing.T) {
@@ -519,14 +522,14 @@ func TestAssessFarmSafety(t *testing.T) {
 }
 
 func TestCalcSampleIgeo(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
 	t.Run("8种金属都有数据", func(t *testing.T) {
 		fl := models.FarmlandSoil{
 			Pb: 50, Zn: 100, Cu: 70, As: 15,
 			Hg: 0.5, Cd: 1.0, Cr: 50, Ni: 25,
 		}
-		results, maxIgeo, maxMetal := fsm.calcSampleIgeo(fl)
+		results, maxIgeo, maxMetal := fsm.CalcSampleIgeo(fl)
 		if len(results) != 8 {
 			t.Errorf("金属Igeo结果数=%d，期望8", len(results))
 		}
@@ -551,9 +554,9 @@ func TestCalcSampleIgeo(t *testing.T) {
 }
 
 func TestGenerateSummary(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
-	summary := fsm.generateSummary(5, 3.5, 450, "较高风险")
+	summary := fsm.GenerateSummary(5, 3.5, 450, "较高风险")
 	if summary == "" {
 		t.Error("摘要为空")
 	}
@@ -564,7 +567,7 @@ func TestGenerateSummary(t *testing.T) {
 }
 
 func TestCropRiskDifferences(t *testing.T) {
-	fsm := NewFarmSafetyModule()
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
 
 	t.Run("不同作物风险差异验证", func(t *testing.T) {
 		fl := models.FarmlandSoil{
@@ -575,7 +578,7 @@ func TestCropRiskDifferences(t *testing.T) {
 		landUses := []string{"水田", "旱地", "菜地", "果园", "茶园"}
 		results := make(map[string]int)
 		for _, lu := range landUses {
-			rec := fsm.assessCropRisk(fl, lu)
+			rec := fsm.AssessCropRisk(fl, lu)
 			results[lu] = rec.ExceedCount
 			t.Logf("%s: 超标数=%d, 风险等级=%s", lu, rec.ExceedCount, rec.RiskLevel)
 		}
@@ -594,4 +597,100 @@ func TestCropRiskDifferences(t *testing.T) {
 			t.Log("注意：所有土地利用类型超标数相同（可能BCF差异不大或都超标/都不超标）")
 		}
 	})
+}
+
+func TestKrigingServiceCreation(t *testing.T) {
+	ks := soil_safety_evaluator.NewKrigingService()
+	if ks == nil {
+		t.Fatal("NewKrigingService 返回 nil")
+	}
+}
+
+func TestSphericalVariogram(t *testing.T) {
+	params := soil_safety_evaluator.KrigingParams{
+		Nugget: 10.0,
+		Sill:   200.0,
+		Range:  1500.0,
+		Model:  "spherical",
+	}
+
+	t.Run("h=0 → Nugget", func(t *testing.T) {
+		gamma := soil_safety_evaluator.SphericalVariogram(0, params)
+		if gamma != params.Nugget {
+			t.Errorf("h=0 → γ=%.4f，期望 %.4f", gamma, params.Nugget)
+		}
+	})
+
+	t.Run("h≥Range → Nugget+Sill", func(t *testing.T) {
+		gamma := soil_safety_evaluator.SphericalVariogram(1500, params)
+		expected := params.Nugget + params.Sill
+		if math.Abs(gamma-expected) > 1e-6 {
+			t.Errorf("h=Range → γ=%.4f，期望 %.4f", gamma, expected)
+		}
+		gamma2 := soil_safety_evaluator.SphericalVariogram(3000, params)
+		if math.Abs(gamma2-expected) > 1e-6 {
+			t.Errorf("h=2*Range → γ=%.4f，期望 %.4f", gamma2, expected)
+		}
+	})
+
+	t.Run("0<h<Range → between Nugget and Nugget+Sill", func(t *testing.T) {
+		h := 750.0
+		gamma := soil_safety_evaluator.SphericalVariogram(h, params)
+		if gamma <= params.Nugget {
+			t.Errorf("h=750 → γ=%.4f，应 > Nugget=%.4f", gamma, params.Nugget)
+		}
+		if gamma >= params.Nugget+params.Sill {
+			t.Errorf("h=750 → γ=%.4f，应 < Nugget+Sill=%.4f", gamma, params.Nugget+params.Sill)
+		}
+		ratio := h / params.Range
+		expected := params.Nugget + params.Sill*(1.5*ratio-0.5*ratio*ratio*ratio)
+		if math.Abs(gamma-expected) > 1e-10 {
+			t.Errorf("h=750 → γ=%.6f，期望 %.6f", gamma, expected)
+		}
+	})
+
+	t.Run("negative h → Nugget", func(t *testing.T) {
+		gamma := soil_safety_evaluator.SphericalVariogram(-100, params)
+		if gamma != params.Nugget {
+			t.Errorf("h=-100 → γ=%.4f，期望 Nugget=%.4f", gamma, params.Nugget)
+		}
+	})
+}
+
+func TestKrigingInterpolationSparse(t *testing.T) {
+	fsm := soil_safety_evaluator.NewSoilSafetyEvaluator()
+
+	farmlands := []models.FarmlandSoil{
+		{ID: 1, DistanceFromSite: 200, LandUseType: "旱地",
+			Pb: 300, Zn: 500, Cu: 400, As: 40, Hg: 1.5, Cd: 4, Cr: 80, Ni: 40},
+		{ID: 2, DistanceFromSite: 1500, LandUseType: "旱地",
+			Pb: 50, Zn: 100, Cu: 60, As: 8, Hg: 0.1, Cd: 0.3, Cr: 40, Ni: 15},
+	}
+
+	ctx := context.Background()
+	result, err := fsm.AssessFarmSafety(ctx, 1, farmlands)
+	if err != nil {
+		t.Fatalf("评估失败: %v", err)
+	}
+
+	if result.SpatialUncertainty == nil {
+		t.Fatal("SpatialUncertainty 不应为 nil")
+	}
+
+	if !result.SpatialUncertainty.SampleSparsityWarning {
+		t.Error("稀疏样点应触发 SampleSparsityWarning=true")
+	}
+
+	if result.SpatialUncertainty.EffectiveSampleCount >= 4 {
+		t.Errorf("有效样点数=%d，应<4（稀疏）", result.SpatialUncertainty.EffectiveSampleCount)
+	}
+
+	if result.SpatialUncertainty.DataQualityNote == "" {
+		t.Error("稀疏数据应有 DataQualityNote")
+	}
+
+	t.Logf("稀疏数据: 有效样点=%d, 警告=%v, 备注=%s",
+		result.SpatialUncertainty.EffectiveSampleCount,
+		result.SpatialUncertainty.SampleSparsityWarning,
+		result.SpatialUncertainty.DataQualityNote)
 }

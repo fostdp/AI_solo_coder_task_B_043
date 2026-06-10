@@ -22,10 +22,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     SiteDetail.setAPIBase(API_BASE);
-    if (typeof SmeltingProcess !== 'undefined' && SmeltingProcess.setAPIBase) SmeltingProcess.setAPIBase(API_BASE);
-    if (typeof FarmSafety !== 'undefined' && FarmSafety.setAPIBase) FarmSafety.setAPIBase(API_BASE);
-    if (typeof SlagRecycle !== 'undefined' && SlagRecycle.setAPIBase) SlagRecycle.setAPIBase(API_BASE);
-    if (typeof TimelineCompare !== 'undefined' && TimelineCompare.setAPIBase) TimelineCompare.setAPIBase(API_BASE);
+    if (typeof ProcessInverter !== 'undefined' && ProcessInverter.setAPIBase) ProcessInverter.setAPIBase(API_BASE);
+    if (typeof SoilSafetyEvaluator !== 'undefined' && SoilSafetyEvaluator.setAPIBase) SoilSafetyEvaluator.setAPIBase(API_BASE);
+    if (typeof SlagReuseAdvisor !== 'undefined' && SlagReuseAdvisor.setAPIBase) SlagReuseAdvisor.setAPIBase(API_BASE);
+    if (typeof GlobalComparator !== 'undefined' && GlobalComparator.setAPIBase) GlobalComparator.setAPIBase(API_BASE);
 
     await loadSites();
     refreshStats();
@@ -104,8 +104,8 @@ function onSidebarFilterChange() {
 
 // ====== 时间线模态框 ======
 function initTimelineModal() {
-    if (typeof TimelineCompare !== 'undefined' && TimelineCompare.init) {
-        TimelineCompare.init(allSites);
+    if (typeof GlobalComparator !== 'undefined' && GlobalComparator.init) {
+        GlobalComparator.init(allSites);
     }
 }
 
@@ -113,8 +113,8 @@ function openTimelineModal() {
     var modal = document.getElementById('timelineModal');
     if (modal) {
         modal.style.display = 'flex';
-        if (typeof TimelineCompare !== 'undefined' && TimelineCompare.init) {
-            TimelineCompare.init(allSites);
+        if (typeof GlobalComparator !== 'undefined' && GlobalComparator.init) {
+            GlobalComparator.init(allSites);
         }
     }
 }
@@ -122,8 +122,8 @@ function openTimelineModal() {
 function closeTimelineModal() {
     var modal = document.getElementById('timelineModal');
     if (modal) modal.style.display = 'none';
-    if (typeof TimelineCompare !== 'undefined' && TimelineCompare.stopAnimation) {
-        TimelineCompare.stopAnimation();
+    if (typeof GlobalComparator !== 'undefined' && GlobalComparator.stopAnimation) {
+        GlobalComparator.stopAnimation();
     }
 }
 
@@ -137,13 +137,13 @@ function loadTimelineData() {
             }
         }
     }
-    if (typeof TimelineCompare !== 'undefined' && TimelineCompare.load) {
-        TimelineCompare.load(ids.length > 0 ? ids : null);
+    if (typeof GlobalComparator !== 'undefined' && GlobalComparator.load) {
+        GlobalComparator.load(ids.length > 0 ? ids : null);
     }
 }
 
 function toggleTimelineAnimation() {
-    if (typeof TimelineCompare !== 'undefined' && TimelineCompare.toggleAnimation) {
-        TimelineCompare.toggleAnimation();
+    if (typeof GlobalComparator !== 'undefined' && GlobalComparator.toggleAnimation) {
+        GlobalComparator.toggleAnimation();
     }
 }

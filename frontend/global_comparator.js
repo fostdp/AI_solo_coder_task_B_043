@@ -58,7 +58,7 @@
         '#f85149', '#bc8c4e', '#a371f7', '#d29922'
     ];
 
-    var TimelineCompare = {
+    var GlobalComparator = {
         setAPIBase: function (url) { API_BASE = url; },
         init: function (sites) {
             allSites = sites || [];
@@ -677,7 +677,7 @@
                     .then(function (r) { return r.json(); })
                     .then(function (d) {
                         var sites = d.data || [];
-                        TimelineCompare.init(sites);
+                        GlobalComparator.init(sites);
                     })
                     .catch(function () {});
             }
@@ -703,18 +703,18 @@
             }
         }
 
-        TimelineCompare.load(siteIDs).then(function (data) {
+        GlobalComparator.load(siteIDs).then(function (data) {
             if (data) {
                 resetAnimation();
-                TimelineCompare.render(data);
+                GlobalComparator.render(data);
             }
         });
     };
 
     global.toggleTimelineAnimation = function () {
-        TimelineCompare.toggleAnimation();
+        GlobalComparator.toggleAnimation();
     };
 
-    global.TimelineCompare = TimelineCompare;
+    global.GlobalComparator = GlobalComparator;
 
 })(typeof window !== 'undefined' ? window : this);

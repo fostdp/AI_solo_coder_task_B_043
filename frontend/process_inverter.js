@@ -445,7 +445,7 @@
         container.appendChild(card);
     }
 
-    var SmeltingProcess = {
+    var ProcessInverter = {
         setAPIBase: function (url) { API_BASE = url; },
 
         load: function (siteId) {
@@ -453,7 +453,7 @@
                 .then(function (r) { return r.json(); })
                 .then(function (json) { return json.data || json; })
                 .catch(function (e) {
-                    console.error('SmeltingProcess.load failed:', e);
+                    console.error('ProcessInverter.load failed:', e);
                     return null;
                 });
         },
@@ -501,6 +501,6 @@
         }
     };
 
-    global.SmeltingProcess = SmeltingProcess;
+    global.ProcessInverter = ProcessInverter;
 
 })(typeof window !== 'undefined' ? window : this);
