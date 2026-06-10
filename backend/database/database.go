@@ -43,3 +43,11 @@ func Close() {
 		log.Println("Database connection closed")
 	}
 }
+
+// GetPool 获取连接池（兼容context参数的函数签名）
+func GetPool(_ context.Context) *pgxpool.Pool {
+	return Pool
+}
+
+// Init 兼容旧代码的Connect别名
+func Init() { Connect() }

@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"math"
 
 	"archaeology-pollution-system/database"
@@ -325,8 +326,6 @@ func CalculatePollutionIndex(pb, zn, cu, as, hg, cd float64) float64 {
 		"Pb": pb, "Zn": zn, "Cu": cu,
 		"As": as, "Hg": hg, "Cd": cd,
 	}
-	sum := 0.0
-	count := 0
 	for metal, val := range metals {
 		if val > 0 {
 			sum += val / standards[metal]
@@ -337,4 +336,156 @@ func CalculatePollutionIndex(pb, zn, cu, as, hg, cd float64) float64 {
 		return 0
 	}
 	return math.Round(sum/float64(count)*10000) / 10000
+}
+
+// =========================================
+// 兼容包装函数（新模块命名风格）
+// =========================================
+
+func GetSitesWithPollution(ctx context.Context) ([]models.SiteWithPollution, error) {
+	return GetAllSitesWithPollution(ctx)
+}
+
+func GetSite(ctx context.Context, id int) (*models.Site, error) {
+	return GetSiteByID(ctx, id)
+}
+
+func GetXRFMeasurements(ctx context.Context, siteID int, limitYears int) ([]models.XRFMeasurement, error) {
+	return GetXRFMeasurementsBySite(ctx, siteID, limitYears)
+}
+
+func GetAllXRFMeasurements(ctx context.Context) ([]models.XRFMeasurement, error) {
+	sites, err := GetAllSitesWithPollution(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var all []models.XRFMeasurement
+	for _, s := range sites {
+		ms, err := GetXRFMeasurementsBySite(ctx, s.ID, 1)
+		if err == nil && len(ms) > 0 {
+			all = append(all, ms[0])
+		}
+	}
+	return all, nil
+}
+
+func UpsertXRFMeasurement(ctx context.Context, m *models.XRFMeasurement) error {
+	return InsertXRFMeasurement(ctx, m)
+}
+
+func GetAllFingerprints(ctx context.Context) ([]models.PollutionFingerprint, error) {
+	return GetAllPollutionFingerprints(ctx)
+}
+
+func GetAllRemediationTechnologies(ctx context.Context) ([]models.RemediationTechnology, error) {
+	rows, err := database.GetPool(ctx).Query(ctx, `
+		SELECT id, tech_name, tech_type, description, applicable_metals,
+	       remediation_efficiency, avg_cost_per_m3, avg_duration_months,
+	       soil_types, environmental_impact_score, sustainability_score,
+	       applicable_regions, advantages, limitations
+		FROM remediation_technologies
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var techs []models.RemediationTechnology
+	for rows.Next() {
+		var t models.RemediationTechnology
+		err := rows.Scan(
+			&t.ID, &t.TechName, &t.TechType, &t.Description,
+			&t.ApplicableMetals, &t.RemediationEfficiency, &t.AvgCostPerM3,
+			&t.AvgDurationMonths, &t.SoilTypes, &t.EnvironmentalImpactScore,
+			&t.SustainabilityScore, &t.ApplicableRegions, &t.Advantages,
+			&t.Limitations)
+		if err != nil {
+			return nil, err
+		}
+		techs = append(techs, t)
+	}
+	return techs, nil
+}
+
+func GetAllRiskStandards(ctx context.Context) ([]models.RiskStandard, error) {
+	return GetRiskStandards(ctx)
+}
+
+func GetAlerts(ctx context.Context, siteID int, limit int) ([]models.Alert, error) {
+	query := `
+		SELECT id, site_id, alert_type, metal_type, severity,
+		       concentration, threshold, exceed_ratio,
+		       pollution_index, eco_risk_index, message,
+		       is_sent, is_resolved, email_recipients, created_at
+		FROM alerts
+	`
+	args := []interface{}{}
+	if siteID > 0 {
+		query += " WHERE site_id = $1"
+		args = append(args, siteID)
+	}
+	query += " ORDER BY created_at DESC LIMIT $2"
+	args = append(args, limit)
+	rows, err := database.GetPool(ctx).Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var alerts []models.Alert
+	for rows.Next() {
+		var a models.Alert
+		recipJSON := []byte{}
+		err := rows.Scan(&a.ID, &a.SiteID, &a.AlertType, &a.MetalType,
+			&a.Severity, &a.Concentration, &a.Threshold,
+			&a.ExceedRatio, &a.PollutionIndex, &a.EcoRiskIndex,
+			&a.Message, &a.IsSent, &a.IsResolved, &recipJSON, &a.CreatedAt)
+		if err != nil {
+			return nil, err
+		}
+		json.Unmarshal(recipJSON, &a.EmailRecipients)
+		alerts = append(alerts, a)
+	}
+	return alerts, nil
+}
+
+func CreateAlert(ctx context.Context, alert *models.Alert) (*models.Alert, error) {
+	err := InsertAlert(ctx, alert)
+	if err != nil {
+		return nil, err
+	}
+	return alert, nil
+}
+
+func GetLatestIsotopeRatio(ctx context.Context, siteID int) (*models.IsotopeRatio, error) {
+	return GetIsotopeRatios(ctx, siteID, 0)
+}
+
+func GetLatestMetalSpeciation(ctx context.Context, siteID int) (*models.MetalSpeciation, error) {
+	specs, err := GetMetalSpeciation(ctx, siteID, 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	return &specs[0], nil
+}
+
+func SaveRemediationAssessment(ctx context.Context, a *models.RemediationAssessment) (int, error) {
+	if a == nil {
+		return 0, nil
+	}
+	techJSON, _ := json.Marshal(a.RecommendedTechs)
+	concsJSON, _ := json.Marshal(a.MetalConcs)
+	metalsJSON, _ := json.Marshal(a.DetectedMetals)
+	var id int
+	err := database.GetPool(ctx).QueryRow(ctx, `
+		INSERT INTO remediation_assessments
+		(site_id, detected_metals, metal_concentrations,
+		 pollution_index, eco_risk_index, mobility_level,
+		 recommended_techs, assessment_date)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id
+	`, a.SiteID, metalsJSON, concsJSON, a.PollutionIndex,
+		a.EcoRiskIndex, a.MobilityLevel, techJSON, a.AssessmentDate).Scan(&id)
+	return id, err
 }
